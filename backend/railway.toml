@@ -4,7 +4,7 @@ dockerfilePath = "backend/Dockerfile"
 watchPatterns = ["backend/**", "database/migrations/**"]
 
 [deploy]
-preDeployCommand = ["python -m civicos_api.migrations"]
+preDeployCommand = ["python -m civicos_api.migrations && python -m civicos_api.bootstrap_founder"]
 healthcheckPath = "/readyz"
 healthcheckTimeout = 120
 restartPolicyType = "ON_FAILURE"

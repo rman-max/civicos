@@ -12,3 +12,4 @@ Current decisions:
 - `0006-public-beta-privacy-boundaries.md` — minimal feedback and anonymous beta analytics.
 - `0007-founder-intelligence-is-evidence-bound.md` — private, evidence-bound commercial signal detection.
 - `0008-railway-api-deployment.md` — root-context API image and checksum-tracked pre-deploy migrations.
+- `0009-temporary-founder-secret-authentication.md` — one-founder bridge authentication before OIDC.

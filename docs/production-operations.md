@@ -4,11 +4,17 @@
 
 Deploy PostgreSQL, S3-compatible storage, Qdrant, and an OIDC provider as independently managed services. Docker Compose is a local/initial topology, not a production orchestrator or secret store. Terminate TLS and enforce network policy at ingress; only the frontend and selected API routes should be internet-facing.
 
-Production requires `CIVICOS_ENVIRONMENT=production`, `CIVICOS_AUTH_MODE=oidc`, non-wildcard `CIVICOS_ALLOWED_HOSTS`, explicit CORS origins, and a confidential `CIVICOS_METRICS_TOKEN`. Startup rejects incomplete OIDC or production monitoring configuration.
+Production requires `CIVICOS_ENVIRONMENT=production`, a secure authentication mode, non-wildcard `CIVICOS_ALLOWED_HOSTS`, explicit CORS origins, and a confidential `CIVICOS_METRICS_TOKEN`. Startup rejects incomplete production authentication or monitoring configuration.
 
 ## Authentication and user management
 
 The API validates RS256 OIDC bearer tokens against the configured issuer, audience, and JWKS. Tokens require `sub`, `exp`, `iat`, and a UUID tenant claim named by `CIVICOS_AUTH_ORGANIZATION_CLAIM` (default `organization_id`). The token subject must also resolve to an active CivicOS user and active PostgreSQL membership for that tenant.
+
+## Temporary founder-only authentication
+
+Until an OIDC provider is selected, production may use `CIVICOS_AUTH_MODE=founder_secret`. This mode has exactly one configured founder subject and no registration, password recovery, or public account surface. The pre-deploy bootstrap creates or verifies that founder's active `tenant_admin` membership in the configured organization. `/auth/founder/login` accepts the server-only `CIVICOS_FOUNDER_AUTH_SECRET` over HTTPS, compares it in constant time, and issues an HS256 bearer token with a one-hour default lifetime. Every subsequent request still resolves the token's subject and tenant against active PostgreSQL membership before injecting tenant headers.
+
+Set a unique secret of at least 32 characters directly in the hosting platform. Never use a `NEXT_PUBLIC_` variable, commit it, reuse it for metrics, or place it in an application URL. The founder console keeps its issued token in browser session storage only; closing the browser session requires a new login. To rotate access, change `CIVICOS_FOUNDER_AUTH_SECRET` and redeploy. Replacing this mode with Clerk/Auth0 only requires changing `CIVICOS_AUTH_MODE` to `oidc` and configuring the existing issuer, audience, and JWKS variables; the CivicOS user and tenant membership model remains unchanged.
 
 The API strips client-provided tenant/user headers and internally replaces them with the verified identity. `tenant_admin` users manage existing IdP identities through `/v1/users`, assigning `tenant_admin`, `researcher`, or `government_staff` roles and deactivating tenant memberships. CivicOS never stores passwords or creates IdP accounts. Keep at least two active administrators; the database rejects removal of the final administrator.
 

@@ -52,7 +52,9 @@ def apply_migrations(database_url: str, paths: Iterable[Path] | None = None) -> 
                 """
             )
             cursor.execute(f"SELECT version, checksum FROM {MIGRATION_LEDGER_TABLE}")
-            applied = dict(cursor.fetchall())
+            applied: dict[str, str] = {
+                str(version): str(checksum) for version, checksum in cursor.fetchall()
+            }
 
             for path in ordered_paths:
                 version = path.name

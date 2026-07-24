@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import AnyHttpUrl, Field, model_validator
+from pydantic import AnyHttpUrl, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,7 +20,7 @@ class Settings(BaseSettings):
         default_factory=lambda: ["localhost", "127.0.0.1", "testserver"],
         validation_alias="CIVICOS_ALLOWED_HOSTS",
     )
-    auth_mode: Literal["development", "oidc"] = Field(
+    auth_mode: Literal["development", "oidc", "founder_secret"] = Field(
         default="development", validation_alias="CIVICOS_AUTH_MODE"
     )
     auth_issuer: AnyHttpUrl | None = Field(default=None, validation_alias="CIVICOS_AUTH_ISSUER")
@@ -28,6 +28,34 @@ class Settings(BaseSettings):
     auth_jwks_url: AnyHttpUrl | None = Field(default=None, validation_alias="CIVICOS_AUTH_JWKS_URL")
     auth_organization_claim: str = Field(
         default="organization_id", min_length=1, validation_alias="CIVICOS_AUTH_ORGANIZATION_CLAIM"
+    )
+    founder_auth_secret: SecretStr | None = Field(
+        default=None, validation_alias="CIVICOS_FOUNDER_AUTH_SECRET"
+    )
+    founder_external_subject: str = Field(
+        default="civicos-founder", min_length=1, validation_alias="CIVICOS_FOUNDER_EXTERNAL_SUBJECT"
+    )
+    founder_email: str = Field(
+        default="founder@civicos.local", min_length=3, validation_alias="CIVICOS_FOUNDER_EMAIL"
+    )
+    founder_display_name: str = Field(
+        default="CivicOS Founder", min_length=1, validation_alias="CIVICOS_FOUNDER_DISPLAY_NAME"
+    )
+    founder_organization_slug: str = Field(
+        default="st-joseph-county-indiana",
+        min_length=1,
+        validation_alias="CIVICOS_FOUNDER_ORGANIZATION_SLUG",
+    )
+    founder_organization_name: str = Field(
+        default="St. Joseph County, Indiana",
+        min_length=1,
+        validation_alias="CIVICOS_FOUNDER_ORGANIZATION_NAME",
+    )
+    founder_token_ttl_seconds: int = Field(
+        default=3600,
+        ge=300,
+        le=28800,
+        validation_alias="CIVICOS_FOUNDER_TOKEN_TTL_SECONDS",
     )
     request_max_bytes: int = Field(
         default=1_000_000, ge=1_024, le=10_000_000, validation_alias="CIVICOS_API_MAX_REQUEST_BYTES"
@@ -81,10 +109,21 @@ class Settings(BaseSettings):
                 "CIVICOS_ASSISTANT_HIGH_CONFIDENCE_THRESHOLD"
             )
         if self.environment == "production":
-            if self.auth_mode != "oidc":
-                raise ValueError("CIVICOS_AUTH_MODE must be oidc in production")
-            if not self.auth_issuer or not self.auth_audience or not self.auth_jwks_url:
+            if self.auth_mode not in {"oidc", "founder_secret"}:
+                raise ValueError("CIVICOS_AUTH_MODE must be oidc or founder_secret in production")
+            if self.auth_mode == "oidc" and (
+                not self.auth_issuer or not self.auth_audience or not self.auth_jwks_url
+            ):
                 raise ValueError("Production OIDC requires issuer, audience, and JWKS URL")
+            if self.auth_mode == "founder_secret":
+                if (
+                    self.founder_auth_secret is None
+                    or len(self.founder_auth_secret.get_secret_value()) < 32
+                ):
+                    raise ValueError(
+                        "Founder-secret authentication requires CIVICOS_FOUNDER_AUTH_SECRET "
+                        "with at least 32 characters"
+                    )
             if "*" in self.allowed_hosts:
                 raise ValueError("CIVICOS_ALLOWED_HOSTS must not contain * in production")
             if not self.metrics_token:

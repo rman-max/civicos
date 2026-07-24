@@ -163,7 +163,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         request_id = request.headers.get("X-Request-ID") or str(uuid4())
         request.state.request_id = request_id
-        if request.url.path.startswith(("/v1/", "/public/")) and not self._limiter.allow(
+        if request.url.path.startswith(("/v1/", "/public/", "/auth/")) and not self._limiter.allow(
             _client_key(request)
         ):
             limited_response = JSONResponse(

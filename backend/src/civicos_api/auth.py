@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import secrets
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
 import jwt
@@ -73,16 +75,108 @@ class OidcTokenVerifier:
         return VerifiedToken(external_subject=subject, organization_id=organization_id)
 
 
+class TokenVerifier(Protocol):
+    """Verifies a bearer token into the identity claims CivicOS needs at its edge."""
+
+    def verify(self, authorization_header: str | None) -> VerifiedToken: ...
+
+
+class FounderSecretTokenVerifier:
+    """Verifies the temporary, single-founder tokens issued by CivicOS itself.
+
+    This mode deliberately has no registration, account recovery, or user-discovery
+    surface. Its issuer and audience are private application constants so it cannot
+    be confused with an eventual OIDC token.
+    """
+
+    issuer = "civicos-founder-secret"
+    audience = "civicos-founder"
+
+    def __init__(self, settings: Settings) -> None:
+        if settings.founder_auth_secret is None:
+            raise ValueError("Founder-secret authentication requires CIVICOS_FOUNDER_AUTH_SECRET")
+        self._secret = settings.founder_auth_secret.get_secret_value()
+        self._external_subject = settings.founder_external_subject
+        self._organization_slug = settings.founder_organization_slug
+        self._ttl_seconds = settings.founder_token_ttl_seconds
+
+    @property
+    def secret(self) -> str:
+        """Return the in-memory secret only for constant-time login comparison."""
+
+        return self._secret
+
+    @property
+    def external_subject(self) -> str:
+        return self._external_subject
+
+    @property
+    def organization_slug(self) -> str:
+        return self._organization_slug
+
+    def verify(self, authorization_header: str | None) -> VerifiedToken:
+        token = _bearer_token(authorization_header)
+        try:
+            claims = jwt.decode(
+                token,
+                self._secret,
+                algorithms=["HS256"],
+                audience=self.audience,
+                issuer=self.issuer,
+                options={"require": ["exp", "iat", "sub", "organization_id"]},
+            )
+        except InvalidTokenError as error:
+            raise AuthenticationError("The bearer token is invalid or expired") from error
+        if claims.get("sub") != self._external_subject:
+            raise AuthenticationError("The bearer token is not authorized for this founder account")
+        if claims.get("organization_slug") != self._organization_slug:
+            raise AuthenticationError("The bearer token is not authorized for this organization")
+        organization_claim = claims.get("organization_id")
+        if not isinstance(organization_claim, str):
+            raise AuthenticationError("The bearer token does not contain a tenant claim")
+        try:
+            organization_id = UUID(organization_claim)
+        except ValueError as error:
+            raise AuthenticationError("The bearer token tenant claim is invalid") from error
+        return VerifiedToken(
+            external_subject=self._external_subject, organization_id=organization_id
+        )
+
+    def issue(self, organization_id: UUID) -> tuple[str, int]:
+        now = datetime.now(UTC)
+        expires_at = now + timedelta(seconds=self._ttl_seconds)
+        token = jwt.encode(
+            {
+                "sub": self._external_subject,
+                "organization_id": str(organization_id),
+                "organization_slug": self._organization_slug,
+                "iss": self.issuer,
+                "aud": self.audience,
+                "iat": now,
+                "exp": expires_at,
+            },
+            self._secret,
+            algorithm="HS256",
+        )
+        return token, self._ttl_seconds
+
+
 class Authenticator:
     """Combines token verification with the authoritative CivicOS membership check."""
 
     def __init__(self, settings: Settings, user_repository: PostgresUserRepository | None) -> None:
-        self._token_verifier = OidcTokenVerifier(settings) if settings.auth_mode == "oidc" else None
+        self._token_verifier: TokenVerifier | None
+        if settings.auth_mode == "oidc":
+            self._token_verifier = OidcTokenVerifier(settings)
+        elif settings.auth_mode == "founder_secret":
+            self._token_verifier = FounderSecretTokenVerifier(settings)
+        else:
+            self._token_verifier = None
         self._user_repository = user_repository
 
     async def authenticate(self, authorization_header: str | None) -> Principal:
         if self._token_verifier is None or self._user_repository is None:
-            raise AuthenticationError("OIDC authentication is not configured")
+            raise AuthenticationError("Bearer authentication is not configured")
         verified = self._token_verifier.verify(authorization_header)
         membership = await self._user_repository.resolve_membership(
             external_subject=verified.external_subject,
@@ -91,6 +185,24 @@ class Authenticator:
         if membership is None:
             raise AuthenticationError("The authenticated user has no active tenant membership")
         return _principal_from_membership(verified, membership)
+
+    async def login_founder(self, supplied_secret: str) -> tuple[str, int]:
+        """Exchange the configured founder secret for one short-lived bearer token."""
+
+        if (
+            not isinstance(self._token_verifier, FounderSecretTokenVerifier)
+            or self._user_repository is None
+        ):
+            raise AuthenticationError("Founder-secret authentication is not configured")
+        if not secrets.compare_digest(supplied_secret, self._token_verifier.secret):
+            raise AuthenticationError("The founder secret is invalid")
+        organization_id = await self._user_repository.resolve_founder_organization(
+            external_subject=self._token_verifier.external_subject,
+            organization_slug=self._token_verifier.organization_slug,
+        )
+        if organization_id is None:
+            raise AuthenticationError("The founder account is not provisioned or active")
+        return self._token_verifier.issue(organization_id)
 
 
 def _principal_from_membership(
@@ -102,6 +214,15 @@ def _principal_from_membership(
         role_key=membership.role_key,
         external_subject=verified.external_subject,
     )
+
+
+def _bearer_token(authorization_header: str | None) -> str:
+    if authorization_header is None:
+        raise AuthenticationError("A bearer token is required")
+    scheme, _, token = authorization_header.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise AuthenticationError("Authorization must use the Bearer scheme")
+    return token
 
 
 def principal_headers(

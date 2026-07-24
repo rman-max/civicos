@@ -21,7 +21,7 @@ from civicos_api.assistant import (
     GroundedAnswerService,
     OpenAICompatibleAnswerClient,
 )
-from civicos_api.auth import Authenticator
+from civicos_api.auth import AuthenticationError, Authenticator
 from civicos_api.beta import (
     BetaAnalyticsEventName,
     BetaSurface,
@@ -297,6 +297,16 @@ class CurrentUserResponse(BaseModel):
     role_key: str
 
 
+class FounderLoginRequest(BaseModel):
+    secret: Annotated[str, Field(min_length=32, max_length=1_024)]
+
+
+class FounderLoginResponse(BaseModel):
+    access_token: str
+    token_type: Literal["Bearer"]
+    expires_in: int
+
+
 class ProvisionUserRequest(BaseModel):
     external_subject: Annotated[str, Field(min_length=1, max_length=255)]
     email: Annotated[str, Field(min_length=3, max_length=320)]
@@ -488,10 +498,12 @@ def get_founder_intelligence_repository() -> PostgresFounderIntelligenceReposito
     return PostgresFounderIntelligenceRepository(settings.database_url)
 
 
+authenticator = Authenticator(settings, get_user_repository())
+
 app.add_middleware(
     AuthenticationMiddleware,
     settings=settings,
-    authenticator=Authenticator(settings, get_user_repository()),
+    authenticator=authenticator,
 )
 app.add_middleware(
     RequestContextMiddleware,
@@ -621,6 +633,21 @@ async def record_public_beta_analytics_event(
         surface=request.surface,
     )
     return {"accepted": True}
+
+
+@app.post("/auth/founder/login", response_model=FounderLoginResponse)
+async def founder_login(request: FounderLoginRequest) -> FounderLoginResponse:
+    """Exchange the private Railway-stored founder secret for a short-lived token."""
+
+    try:
+        access_token, expires_in = await authenticator.login_founder(request.secret)
+    except AuthenticationError as error:
+        raise HTTPException(status_code=401, detail="Founder login failed") from error
+    return FounderLoginResponse(
+        access_token=access_token,
+        token_type="Bearer",
+        expires_in=expires_in,
+    )
 
 
 @app.get("/v1/me", response_model=CurrentUserResponse)

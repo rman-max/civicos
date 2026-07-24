@@ -67,6 +67,33 @@ class PostgresUserRepository:
             role_key=str(row["role_key"]),
         )
 
+    async def resolve_founder_organization(
+        self, *, external_subject: str, organization_slug: str
+    ) -> UUID | None:
+        """Resolve only the configured active founder-admin membership."""
+
+        async with await psycopg.AsyncConnection.connect(
+            self._database_url, row_factory=dict_row
+        ) as connection:
+            cursor = await connection.execute(
+                """
+                SELECT organization.id
+                FROM core.organizations AS organization
+                JOIN core.organization_memberships AS membership
+                  ON membership.organization_id = organization.id
+                JOIN core.users AS member ON member.id = membership.user_id
+                WHERE organization.slug = %s
+                  AND organization.is_active
+                  AND member.external_subject = %s
+                  AND member.is_active
+                  AND membership.is_active
+                  AND membership.role_key = 'tenant_admin'
+                """,
+                (organization_slug, external_subject),
+            )
+            row = await cursor.fetchone()
+        return UUID(str(row["id"])) if row is not None else None
+
     async def list_users(self, *, organization_id: UUID, user_id: UUID) -> list[ManagedUser]:
         async with self._transaction(organization_id, user_id) as connection:
             cursor = await connection.execute("SELECT * FROM core.list_organization_users()")
