@@ -1,0 +1,136 @@
+name: civicos
+
+services:
+  frontend:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?set NEXT_PUBLIC_API_BASE_URL in .env}
+        NEXT_PUBLIC_BETA_ANALYTICS_ENABLED: ${NEXT_PUBLIC_BETA_ANALYTICS_ENABLED:-false}
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?set NEXT_PUBLIC_API_BASE_URL in .env}
+      NEXT_PUBLIC_BETA_ANALYTICS_ENABLED: ${NEXT_PUBLIC_BETA_ANALYTICS_ENABLED:-false}
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    environment:
+      CIVICOS_ENVIRONMENT: ${CIVICOS_ENVIRONMENT:?set CIVICOS_ENVIRONMENT in .env}
+      CIVICOS_LOG_LEVEL: ${CIVICOS_LOG_LEVEL:?set CIVICOS_LOG_LEVEL in .env}
+      CIVICOS_API_CORS_ORIGINS: ${CIVICOS_API_CORS_ORIGINS:?set CIVICOS_API_CORS_ORIGINS in .env}
+      CIVICOS_ALLOWED_HOSTS: ${CIVICOS_ALLOWED_HOSTS:?set CIVICOS_ALLOWED_HOSTS in .env}
+      CIVICOS_AUTH_MODE: ${CIVICOS_AUTH_MODE:?set CIVICOS_AUTH_MODE in .env}
+      CIVICOS_AUTH_ISSUER: ${CIVICOS_AUTH_ISSUER:-}
+      CIVICOS_AUTH_AUDIENCE: ${CIVICOS_AUTH_AUDIENCE:-}
+      CIVICOS_AUTH_JWKS_URL: ${CIVICOS_AUTH_JWKS_URL:-}
+      CIVICOS_AUTH_ORGANIZATION_CLAIM: ${CIVICOS_AUTH_ORGANIZATION_CLAIM:-organization_id}
+      CIVICOS_API_MAX_REQUEST_BYTES: ${CIVICOS_API_MAX_REQUEST_BYTES:-1000000}
+      CIVICOS_API_RATE_LIMIT_PER_MINUTE: ${CIVICOS_API_RATE_LIMIT_PER_MINUTE:-120}
+      CIVICOS_METRICS_TOKEN: ${CIVICOS_METRICS_TOKEN:-}
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      QDRANT_URL: ${QDRANT_URL:?set QDRANT_URL in .env}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:?set QDRANT_COLLECTION in .env}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      CIVICOS_SEARCH_MAX_LIMIT: ${CIVICOS_SEARCH_MAX_LIMIT:-50}
+      CIVICOS_ASSISTANT_RETRIEVAL_LIMIT: ${CIVICOS_ASSISTANT_RETRIEVAL_LIMIT:-8}
+      CIVICOS_ASSISTANT_MAX_CLAIMS: ${CIVICOS_ASSISTANT_MAX_CLAIMS:-5}
+      CIVICOS_ASSISTANT_MIN_CITATIONS_PER_CLAIM: ${CIVICOS_ASSISTANT_MIN_CITATIONS_PER_CLAIM:-1}
+      CIVICOS_ASSISTANT_TARGET_INDEPENDENT_SOURCES: ${CIVICOS_ASSISTANT_TARGET_INDEPENDENT_SOURCES:-2}
+      CIVICOS_ASSISTANT_TEMPERATURE: ${CIVICOS_ASSISTANT_TEMPERATURE:-0}
+      CIVICOS_ASSISTANT_HIGH_CONFIDENCE_THRESHOLD: ${CIVICOS_ASSISTANT_HIGH_CONFIDENCE_THRESHOLD:-0.85}
+      CIVICOS_ASSISTANT_MEDIUM_CONFIDENCE_THRESHOLD: ${CIVICOS_ASSISTANT_MEDIUM_CONFIDENCE_THRESHOLD:-0.6}
+    ports:
+      - "8000:8000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  ingestion:
+    build:
+      context: ../ingestion
+      dockerfile: Dockerfile
+    profiles: ["discovery"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      S3_BUCKET: ${S3_BUCKET:?set S3_BUCKET in .env}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?set S3_ACCESS_KEY in .env}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?set S3_SECRET_KEY in .env}
+      CIVICOS_DISCOVERY_POLL_SECONDS: ${CIVICOS_DISCOVERY_POLL_SECONDS:-5}
+      CIVICOS_DISCOVERY_USER_AGENT: ${CIVICOS_DISCOVERY_USER_AGENT:-CivicOS-Discovery/0.1}
+      QDRANT_URL: ${QDRANT_URL:?set QDRANT_URL in .env}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:?set QDRANT_COLLECTION in .env}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      CIVICOS_EMBEDDING_MAX_CHARACTERS: ${CIVICOS_EMBEDDING_MAX_CHARACTERS:-30000}
+      CIVICOS_BRIEFING_TIMEZONE: ${CIVICOS_BRIEFING_TIMEZONE:-UTC}
+      CIVICOS_BRIEFING_NEAR_TERM_DAYS: ${CIVICOS_BRIEFING_NEAR_TERM_DAYS:-7}
+      CIVICOS_BRIEFING_LOOKAHEAD_DAYS: ${CIVICOS_BRIEFING_LOOKAHEAD_DAYS:-14}
+      CIVICOS_BRIEFING_SECTION_LIMIT: ${CIVICOS_BRIEFING_SECTION_LIMIT:-10}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+
+  qdrant:
+    image: qdrant/qdrant:v1.15.4
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  postgres-data:
+  qdrant-data:

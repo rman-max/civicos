@@ -1,0 +1,199 @@
+name: Continuous integration
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend checks
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm frontend:lint
+      - run: pnpm frontend:typecheck
+      - run: pnpm frontend:build
+
+  backend:
+    name: Backend checks
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e '.[dev]'
+      - run: ruff check .
+      - run: mypy src tests
+      - run: pytest
+
+  ingestion:
+    name: Discovery worker checks
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ingestion
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -e '.[dev]'
+      - run: ruff check .
+      - run: mypy src tests
+      - run: pytest
+
+  database:
+    name: Database migrations
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: civicos_test
+          POSTGRES_PASSWORD: civicos_test
+          POSTGRES_USER: civicos_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U civicos_test -d civicos_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PGPASSWORD: civicos_test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply initial schema
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/migrations/0001_civic_core.up.sql
+      - name: Apply autonomous discovery schema
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/migrations/0002_autonomous_discovery.up.sql
+      - name: Apply knowledge graph schema
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/migrations/0003_knowledge_graph.up.sql
+      - name: Apply hybrid search schema
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/migrations/0004_hybrid_search.up.sql
+      - name: Apply research notebook schema
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/migrations/0005_research_notebooks.up.sql
+      - name: Apply daily briefing schema
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/migrations/0006_daily_briefings.up.sql
+      - name: Apply authentication and user-management schema
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/migrations/0007_authentication_and_user_management.up.sql
+      - name: Apply public beta feedback and analytics schema
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/migrations/0008_public_beta_feedback_and_analytics.up.sql
+      - name: Apply founder intelligence schema
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/migrations/0009_founder_intelligence.up.sql
+      - name: Verify core constraints and tenant isolation
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/tests/0001_civic_core_test.sql
+      - name: Verify discovery scheduling schema
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/tests/0002_autonomous_discovery_test.sql
+      - name: Verify knowledge graph schema
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/tests/0003_knowledge_graph_test.sql
+      - name: Verify hybrid search schema
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/tests/0004_hybrid_search_test.sql
+      - name: Verify research notebook schema
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/tests/0005_research_notebooks_test.sql
+      - name: Verify research notebook migration rollback
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/migrations/0005_research_notebooks.down.sql
+          -f database/tests/0005_research_notebooks_down_test.sql
+      - name: Verify daily briefing schema
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/tests/0006_daily_briefings_test.sql
+      - name: Verify authentication and user-management schema
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/tests/0007_authentication_and_user_management_test.sql
+      - name: Verify public beta feedback and analytics schema
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/tests/0008_public_beta_feedback_and_analytics_test.sql
+      - name: Verify founder intelligence schema
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/tests/0009_founder_intelligence_test.sql
+      - name: Verify founder intelligence migration rollback
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/migrations/0009_founder_intelligence.down.sql
+          -f database/tests/0009_founder_intelligence_down_test.sql
+      - name: Verify daily briefing migration rollback
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/migrations/0006_daily_briefings.down.sql
+          -f database/tests/0006_daily_briefings_down_test.sql
+      - name: Reapply daily briefing schema for jurisdiction seed verification
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/migrations/0006_daily_briefings.up.sql
+      - name: Reapply authentication schema for jurisdiction seed verification
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/migrations/0007_authentication_and_user_management.down.sql
+          -f database/tests/0007_authentication_and_user_management_down_test.sql
+          -f database/migrations/0007_authentication_and_user_management.up.sql
+      - name: Verify St. Joseph County configuration seed
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/seeds/st_joseph_county_indiana.sql
+          -f database/seeds/st_joseph_county_indiana.sql
+          -f database/tests/st_joseph_county_indiana_seed_test.sql
+      - name: Verify public beta migration rollback
+        run: >-
+          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
+          -f database/migrations/0008_public_beta_feedback_and_analytics.down.sql
+          -f database/tests/0008_public_beta_feedback_and_analytics_down_test.sql
+
+  compose:
+    name: Compose configuration
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      - run: docker compose --env-file .env -f infrastructure/docker-compose.yml config --quiet

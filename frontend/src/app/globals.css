@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-canvas: var(--civicos-canvas);
+  --color-surface: var(--civicos-surface);
+  --color-ink: var(--civicos-ink);
+  --color-ink-muted: var(--civicos-ink-muted);
+  --color-rule: var(--civicos-rule);
+  --color-rule-strong: var(--civicos-rule-strong);
+  --font-sans: var(--civicos-font-sans);
+  --font-serif: var(--civicos-font-serif);
+}
+
+:root {
+  color-scheme: light;
+  --civicos-canvas: #ffffff;
+  --civicos-surface: #f7f7f7;
+  --civicos-ink: #171717;
+  --civicos-ink-muted: #5c5c5c;
+  --civicos-rule: #dedede;
+  --civicos-rule-strong: #ababab;
+  --civicos-font-sans: Arial, Helvetica, sans-serif;
+  --civicos-font-serif: Georgia, Cambria, "Times New Roman", serif;
+}
+
+* {
+  border-color: var(--civicos-rule);
+}
+
+html {
+  background: var(--civicos-canvas);
+}
+
+body {
+  margin: 0;
+  background: var(--civicos-canvas);
+  color: var(--civicos-ink);
+  font-family: var(--civicos-font-sans);
+  font-size: 1rem;
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+::selection {
+  background: var(--civicos-ink);
+  color: var(--civicos-canvas);
+}
+
+:focus-visible {
+  outline: 2px solid var(--civicos-ink);
+  outline-offset: 3px;
+}
+
+.civicos-prose {
+  color: var(--civicos-ink-muted);
+  font-family: var(--civicos-font-serif);
+  font-size: 1.125rem;
+  line-height: 1.75;
+}
+
+.civicos-prose > * + * {
+  margin-top: 1.25em;
+}

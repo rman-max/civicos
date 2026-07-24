@@ -1,0 +1,7 @@
+packages:
+  - frontend
+
+# Explicitly allow reviewed native dependency builds required by Next.js and ESLint.
+allowBuilds:
+  sharp: true
+  unrs-resolver: true
