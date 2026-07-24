@@ -1,0 +1,11 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "backend/Dockerfile"
+watchPatterns = ["backend/**", "database/migrations/**"]
+
+[deploy]
+preDeployCommand = ["python -m civicos_api.migrations"]
+healthcheckPath = "/readyz"
+healthcheckTimeout = 120
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5

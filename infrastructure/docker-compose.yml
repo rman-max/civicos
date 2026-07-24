@@ -24,8 +24,8 @@ services:
 
   backend:
     build:
-      context: ../backend
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: backend/Dockerfile
     environment:
       CIVICOS_ENVIRONMENT: ${CIVICOS_ENVIRONMENT:?set CIVICOS_ENVIRONMENT in .env}
       CIVICOS_LOG_LEVEL: ${CIVICOS_LOG_LEVEL:?set CIVICOS_LOG_LEVEL in .env}
