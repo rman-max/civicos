@@ -29,3 +29,16 @@ def test_migration_checksum_changes_when_migration_contents_change(tmp_path: Pat
     migration.write_text("SELECT 2;", encoding="utf-8")
 
     assert migration_checksum(migration) != original_checksum
+
+
+def test_core_set_updated_at_prerequisite_precedes_every_consumer() -> None:
+    repository_root = Path(__file__).resolve().parents[2]
+    names = [path.name for path in migration_paths(repository_root / "database" / "migrations")]
+    prerequisite_index = names.index("0001_core_set_updated_at_compatibility.up.sql")
+
+    for consumer in (
+        "0002_autonomous_discovery.up.sql",
+        "0003_knowledge_graph.up.sql",
+        "0004_hybrid_search.up.sql",
+    ):
+        assert prerequisite_index < names.index(consumer)

@@ -81,42 +81,15 @@ jobs:
       PGPASSWORD: civicos_test
     steps:
       - uses: actions/checkout@v4
-      - name: Apply initial schema
+      - name: Apply complete schema from zero
+        run: |
+          for migration in $(find database/migrations -maxdepth 1 -name '*.up.sql' | sort); do
+            psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1 -f "$migration"
+          done
+      - name: Verify complete migration sequence
         run: >-
           psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
-          -f database/migrations/0001_civic_core.up.sql
-      - name: Apply autonomous discovery schema
-        run: >-
-          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
-          -f database/migrations/0002_autonomous_discovery.up.sql
-      - name: Apply knowledge graph schema
-        run: >-
-          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
-          -f database/migrations/0003_knowledge_graph.up.sql
-      - name: Apply hybrid search schema
-        run: >-
-          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
-          -f database/migrations/0004_hybrid_search.up.sql
-      - name: Apply research notebook schema
-        run: >-
-          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
-          -f database/migrations/0005_research_notebooks.up.sql
-      - name: Apply daily briefing schema
-        run: >-
-          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
-          -f database/migrations/0006_daily_briefings.up.sql
-      - name: Apply authentication and user-management schema
-        run: >-
-          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
-          -f database/migrations/0007_authentication_and_user_management.up.sql
-      - name: Apply public beta feedback and analytics schema
-        run: >-
-          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
-          -f database/migrations/0008_public_beta_feedback_and_analytics.up.sql
-      - name: Apply founder intelligence schema
-        run: >-
-          psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
-          -f database/migrations/0009_founder_intelligence.up.sql
+          -f database/tests/complete_migration_sequence_test.sql
       - name: Verify core constraints and tenant isolation
         run: >-
           psql -h 127.0.0.1 -U civicos_test -d civicos_test -v ON_ERROR_STOP=1
