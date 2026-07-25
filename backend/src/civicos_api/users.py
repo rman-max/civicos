@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -9,6 +10,8 @@ from uuid import UUID
 
 import psycopg
 from psycopg.rows import dict_row
+
+logger = logging.getLogger("civicos.api.users")
 
 
 class UserManagementError(RuntimeError):
@@ -21,6 +24,10 @@ class UserManagementAccessError(PermissionError):
 
 class UserManagementNotFoundError(LookupError):
     """Raised when a tenant membership does not exist."""
+
+
+class FounderMembershipResolutionError(RuntimeError):
+    """Raised when the database cannot provision or resolve the founder membership."""
 
 
 @dataclass(frozen=True)
@@ -78,16 +85,26 @@ class PostgresUserRepository:
     ) -> AuthenticatedMembership | None:
         """Resolve the one founder identity through the RLS-safe database function."""
 
-        async with await psycopg.AsyncConnection.connect(
-            self._database_url, row_factory=dict_row
-        ) as connection:
-            cursor = await connection.execute(
-                """
-                SELECT * FROM core.ensure_founder_secret_principal(%s, %s, %s, %s, %s)
-                """,
-                (organization_slug, organization_name, external_subject, email, display_name),
+        try:
+            async with await psycopg.AsyncConnection.connect(
+                self._database_url, row_factory=dict_row
+            ) as connection:
+                cursor = await connection.execute(
+                    """
+                    SELECT * FROM core.ensure_founder_secret_principal(%s, %s, %s, %s, %s)
+                    """,
+                    (organization_slug, organization_name, external_subject, email, display_name),
+                )
+                row = await cursor.fetchone()
+        except psycopg.Error as error:
+            logger.error(
+                "founder_membership_resolution_failed database_error_type=%s sqlstate=%s",
+                type(error).__name__,
+                error.sqlstate,
             )
-            row = await cursor.fetchone()
+            raise FounderMembershipResolutionError(
+                "Founder membership could not be provisioned or resolved"
+            ) from error
         if row is None:
             return None
         return AuthenticatedMembership(
