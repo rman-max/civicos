@@ -131,6 +131,17 @@ class Settings(BaseSettings):
         return self
 
 
+def cors_origin_strings(settings: Settings) -> list[str]:
+    """Return browser-origin strings without Pydantic's URL display slash.
+
+    `Origin` headers serialize a scheme and authority without a trailing slash;
+    Starlette's CORS allow-list comparison is exact. `AnyHttpUrl` adds `/` when
+    rendered, so normalize only that representation detail at the HTTP boundary.
+    """
+
+    return [str(origin).rstrip("/") for origin in settings.cors_origins]
+
+
 @lru_cache
 def get_settings() -> Settings:
     """Return one immutable settings instance per process."""

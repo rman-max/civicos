@@ -36,7 +36,7 @@ from civicos_api.briefings import (
     DailyBriefing,
     PostgresBriefingRepository,
 )
-from civicos_api.config import get_settings
+from civicos_api.config import cors_origin_strings, get_settings
 from civicos_api.founder import (
     FounderBrief,
     FounderIntelligenceAccessError,
@@ -97,7 +97,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[str(origin) for origin in settings.cors_origins],
+    allow_origins=cors_origin_strings(settings),
     allow_credentials=False,
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
