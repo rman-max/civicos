@@ -4,9 +4,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
 
-from civicos_api.auth import Principal, principal_headers
+from civicos_api.auth import Authenticator, Principal, principal_headers
 from civicos_api.config import Settings, cors_origin_strings
 from civicos_api.main import app
+from civicos_api.observability import AuthenticationMiddleware
 
 
 def test_health_response_contains_request_id_and_security_headers() -> None:
@@ -103,5 +104,40 @@ def test_cors_normalizes_pydantic_urls_to_the_browser_origin_format() -> None:
     )
 
     assert str(settings.cors_origins[0]) == f"{origin}/"
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == origin
+
+
+def test_authenticated_api_cors_preflight_does_not_require_a_bearer_token() -> None:
+    origin = "https://civicos-frontend-two.vercel.app"
+    settings = Settings.model_validate(
+        {
+            "CIVICOS_AUTH_MODE": "founder_secret",
+            "CIVICOS_FOUNDER_AUTH_SECRET": "a" * 64,
+            "CIVICOS_API_CORS_ORIGINS": [origin],
+        }
+    )
+    preflight_app = FastAPI()
+    preflight_app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origin_strings(settings),
+        allow_methods=["GET", "POST", "DELETE"],
+        allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+    )
+    preflight_app.add_middleware(
+        AuthenticationMiddleware,
+        settings=settings,
+        authenticator=Authenticator(settings, user_repository=None),
+    )
+
+    response = TestClient(preflight_app).options(
+        "/v1/founder/opportunities",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization",
+        },
+    )
+
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == origin

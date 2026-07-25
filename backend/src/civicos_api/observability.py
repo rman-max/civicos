@@ -134,7 +134,11 @@ class AuthenticationMiddleware:
         receive: Callable[..., Awaitable[Any]],
         send: Callable[..., Awaitable[None]],
     ) -> None:
-        if scope["type"] != "http" or not str(scope.get("path", "")).startswith("/v1/"):
+        if (
+            scope["type"] != "http"
+            or scope.get("method") == "OPTIONS"
+            or not str(scope.get("path", "")).startswith("/v1/")
+        ):
             await self.app(scope, receive, send)
             return
         if self._settings.auth_mode == "development":
