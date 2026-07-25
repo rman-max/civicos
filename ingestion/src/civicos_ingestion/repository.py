@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID
@@ -30,6 +31,8 @@ from civicos_ingestion.models import (
     VectorIndexJob,
 )
 from civicos_ingestion.processing import process_document
+
+logger = logging.getLogger(__name__)
 
 
 class DiscoveryRepository(Protocol):
@@ -398,10 +401,10 @@ class PostgresDiscoveryRepository:
 
         await cursor.execute(
             """
-            SELECT record.id, record.current_version_id, version.snapshot
+            SELECT record.id, record.current_version_id,
+              (SELECT version.snapshot FROM civic.canonical_record_versions AS version
+               WHERE version.organization_id = record.organization_id AND version.id = record.current_version_id) AS snapshot
             FROM civic.canonical_records AS record
-            LEFT JOIN civic.canonical_record_versions AS version
-              ON version.organization_id = record.organization_id AND version.id = record.current_version_id
             WHERE record.organization_id = %s AND record.record_type = %s AND record.dedup_key = %s
             FOR UPDATE
             """,
