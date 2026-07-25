@@ -1,0 +1,12 @@
+# Railway worker service configuration. The API service uses backend/railway.toml
+# because its Railway root directory is /backend; this root manifest is for the
+# ingestion service whose root directory must remain the repository root.
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "ingestion/Dockerfile"
+watchPatterns = ["ingestion/**", "database/seeds/**"]
+
+[deploy]
+startCommand = "python -m civicos_ingestion.worker --apply-seed"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
