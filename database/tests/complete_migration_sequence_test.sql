@@ -26,7 +26,8 @@ BEGIN
   IF to_regclass('civic.canonical_records') IS NULL
     OR to_regclass('civic.canonical_record_versions') IS NULL
     OR to_regclass('civic.canonical_record_evidence') IS NULL
-    OR to_regclass('civic.canonical_record_changes') IS NULL THEN
+    OR to_regclass('civic.canonical_record_changes') IS NULL
+    OR to_regclass('civic.canonical_backfill_runs') IS NULL THEN
     RAISE EXCEPTION 'canonical civic-record migration is incomplete';
   END IF;
 END;

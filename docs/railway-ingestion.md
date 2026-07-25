@@ -42,7 +42,15 @@ It safely applies the seed then processes one five-source batch. Leave the persi
 
 ## Canonical civic-record backfill
 
-After the API service deploys migration `0013_canonical_civic_records`, run this one-off command from the worker service:
+After the API service deploys migrations `0013_canonical_civic_records` and `0014_canonical_backfill_run_state`, set this Railway worker variable and redeploy the worker:
+
+```env
+CIVICOS_CANONICAL_BACKFILL_ON_START=true
+```
+
+The locked persistent start command remains unchanged. The worker performs the backfill once per organization and extraction version, records durable completion state, then continues its normal scheduled scans. It is safe to leave the variable enabled; completed backfills are skipped after restarts.
+
+If a worker shell is available, this equivalent one-off command remains supported:
 
 ```sh
 python -m civicos_ingestion.worker --backfill-canonical

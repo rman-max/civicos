@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     founder_brief_section_limit: int = Field(
         default=8, ge=1, le=50, validation_alias="CIVICOS_FOUNDER_BRIEF_SECTION_LIMIT"
     )
+    canonical_backfill_on_start: bool = Field(
+        default=False, validation_alias="CIVICOS_CANONICAL_BACKFILL_ON_START"
+    )
 
     @field_validator(
         "s3_endpoint_url",

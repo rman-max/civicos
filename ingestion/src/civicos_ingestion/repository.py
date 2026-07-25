@@ -10,6 +10,7 @@ from psycopg.types.json import Jsonb
 
 from civicos_ingestion.canonical import (
     CanonicalRecordDraft,
+    EXTRACTION_VERSION,
     canonical_signal_candidates,
     canonicalize_document,
 )
@@ -443,7 +444,7 @@ class PostgresDiscoveryRepository:
                 Jsonb(list(draft.addresses)), Jsonb(list(draft.parcel_numbers)), Jsonb(list(draft.case_numbers)),
                 Jsonb(list(draft.permit_numbers)), Jsonb(list(draft.project_names)), Jsonb(list(draft.money_amounts)),
                 Jsonb(list(draft.deadlines)), Jsonb(list(draft.actions)), Jsonb(list(draft.decisions)), draft.status,
-                Jsonb(list(draft.topics)), Jsonb(draft.typed_payload), draft.confidence, "canonical-deterministic-v1",
+                Jsonb(list(draft.topics)), Jsonb(draft.typed_payload), draft.confidence, EXTRACTION_VERSION,
             ),
         )
         row = await cursor.fetchone()
@@ -461,7 +462,7 @@ class PostgresDiscoveryRepository:
               %s, %s::jsonb
             ) RETURNING id
             """,
-            (organization_id, record_id, raw_document_version_id, organization_id, record_id, "canonical-deterministic-v1", Jsonb(snapshot)),
+            (organization_id, record_id, raw_document_version_id, organization_id, record_id, EXTRACTION_VERSION, Jsonb(snapshot)),
         )
         version_row = await cursor.fetchone()
         if version_row is None:
@@ -933,7 +934,12 @@ class PostgresDiscoveryRepository:
     async def backfill_canonical_records(self, *, limit: int | None = None) -> dict[str, int]:
         """Rebuild the projection from immutable raw versions without recrawling sources."""
 
-        counts = {"raw_documents_processed": 0, "canonical_records_created": 0, "records_rejected": 0, "duplicates_merged": 0}
+        counts = {
+            "raw_documents_processed": 0,
+            "canonical_records_created": 0,
+            "records_rejected": 0,
+            "duplicates_merged": 0,
+        }
         async with await self._connection() as connection:
             async with connection.cursor() as cursor:
                 await cursor.execute("SELECT id FROM core.organizations WHERE is_active ORDER BY id")
@@ -943,6 +949,27 @@ class PostgresDiscoveryRepository:
                 async with connection.transaction():
                     await self._set_organization(connection, organization_id)
                     async with connection.cursor() as cursor:
+                        await cursor.execute(
+                            """SELECT status FROM civic.canonical_backfill_runs
+                            WHERE organization_id = %s AND extraction_version = %s""",
+                            (organization_id, EXTRACTION_VERSION),
+                        )
+                        existing_run = await cursor.fetchone()
+                        if existing_run and existing_run["status"] == "completed":
+                            continue
+                        organization_counts = {
+                            "raw_documents_processed": 0,
+                            "canonical_records_created": 0,
+                            "records_rejected": 0,
+                            "duplicates_merged": 0,
+                        }
+                        await cursor.execute(
+                            """INSERT INTO civic.canonical_backfill_runs (organization_id, extraction_version, status)
+                            VALUES (%s, %s, 'running')
+                            ON CONFLICT (organization_id, extraction_version) DO UPDATE SET
+                              status = 'running', started_at = now(), completed_at = NULL, error_message = NULL""",
+                            (organization_id, EXTRACTION_VERSION),
+                        )
                         await cursor.execute(
                             """
                             SELECT DISTINCT ON (document.id) document.id AS document_id, version.id AS version_id,
@@ -967,6 +994,7 @@ class PostgresDiscoveryRepository:
                         for row in rows:
                             try:
                                 await cursor.execute("SAVEPOINT canonical_backfill_document")
+                                organization_counts["raw_documents_processed"] += 1
                                 await cursor.execute(
                                     """
                                     SELECT 1 FROM civic.canonical_record_versions
@@ -975,7 +1003,8 @@ class PostgresDiscoveryRepository:
                                     (organization_id, row["version_id"]),
                                 )
                                 if await cursor.fetchone():
-                                    counts["duplicates_merged"] += 1
+                                    organization_counts["duplicates_merged"] += 1
+                                    await cursor.execute("RELEASE SAVEPOINT canonical_backfill_document")
                                     continue
                                 extracted = ExtractedDocument(
                                     title=str(row["title"]), document_type=str(row["document_type"]),
@@ -1005,16 +1034,31 @@ class PostgresDiscoveryRepository:
                                     source_id=UUID(str(row["source_id"])) if row["source_id"] else None,
                                     draft=draft,
                                 )
-                                counts["raw_documents_processed"] += 1
                                 if existed_before:
-                                    counts["duplicates_merged"] += 1
+                                    organization_counts["duplicates_merged"] += 1
                                 else:
-                                    counts["canonical_records_created"] += 1
+                                    organization_counts["canonical_records_created"] += 1
                                 await cursor.execute("RELEASE SAVEPOINT canonical_backfill_document")
                             except Exception:
                                 await cursor.execute("ROLLBACK TO SAVEPOINT canonical_backfill_document")
                                 logger.exception("Canonical backfill failed", extra={"document_id": str(row["document_id"])})
-                                counts["records_rejected"] += 1
+                                organization_counts["records_rejected"] += 1
+                        status = "completed" if organization_counts["records_rejected"] == 0 else "failed"
+                        await cursor.execute(
+                            """UPDATE civic.canonical_backfill_runs SET status = %s, raw_documents_processed = %s,
+                              canonical_records_created = %s, records_rejected = %s, duplicates_merged = %s,
+                              completed_at = now(), error_message = %s
+                            WHERE organization_id = %s AND extraction_version = %s""",
+                            (
+                                status, organization_counts["raw_documents_processed"],
+                                organization_counts["canonical_records_created"], organization_counts["records_rejected"],
+                                organization_counts["duplicates_merged"],
+                                "One or more raw documents could not be canonicalized" if status == "failed" else None,
+                                organization_id, EXTRACTION_VERSION,
+                            ),
+                        )
+                        for key, value in organization_counts.items():
+                            counts[key] += value
         return counts
 
     async def _complete_ingestion_runs(

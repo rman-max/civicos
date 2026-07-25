@@ -74,10 +74,11 @@ async def run_worker(*, once: bool, backfill_canonical: bool = False) -> None:
     service = build_service(settings)
     briefing_service = build_briefing_service(settings)
     founder_brief_service = build_founder_brief_service(settings)
-    if backfill_canonical:
+    if backfill_canonical or settings.canonical_backfill_on_start:
         result = await service.backfill_canonical_records()
         logging.getLogger(__name__).info("Canonical backfill complete", extra=result)
-        return
+        if backfill_canonical:
+            return
     while True:
         await service.record_heartbeat(socket.gethostname())
         discovery_claimed = await service.run_due_jobs()
