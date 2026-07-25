@@ -105,7 +105,7 @@ export function RecordSearch() {
     return (
       <Notice className="mt-8" title="Private search access required">
         Sign in once to Founder Intelligence. You will return to search automatically. {" "}
-        <Link className="font-medium text-ink underline" href="/founder?returnTo=/search">Open Founder Intelligence</Link>
+        <Link className="font-medium text-ink underline" href="/dashboard?returnTo=/search">Open Dashboard</Link>
       </Notice>
     );
   }

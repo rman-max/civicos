@@ -6,15 +6,15 @@ import { usePathname } from "next/navigation";
 import { NavigationList, type NavigationItem } from "@/components/navigation/navigation-list";
 
 const primaryNavigation: NavigationItem[] = [
-  { href: "/demo", label: "Demo" },
+  { href: "/search", label: "Search" },
   { href: "/dashboard", label: "Dashboard" },
   { href: "/briefing", label: "Briefing" },
-  { href: "/search", label: "Search" },
   { href: "/notebook", label: "Notebook" },
   { href: "/collections", label: "Collections" },
   { href: "/timeline", label: "Timeline" },
   { href: "/sources", label: "Sources" },
   { href: "/settings", label: "Settings" },
+  { href: "/demo", label: "Demo" },
 ];
 
 export function SiteHeader() {

@@ -6,7 +6,7 @@ import { RecordSearch } from "@/components/search/record-search";
 export default function SearchPage() {
   return (
     <PageContainer className="py-12 sm:py-16">
-      <Breadcrumbs items={[{ href: "/dashboard", label: "Dashboard" }, { label: "Search" }]} />
+      <Breadcrumbs items={[{ label: "Search" }]} />
       <PageHeader
         className="mt-8"
         description="Search the live St. Joseph County civic corpus. Every result retains its original public-source context."
