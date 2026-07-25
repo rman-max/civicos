@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import logging
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -13,6 +15,9 @@ from civicos_api.users import AuthenticatedMembership, PostgresUserRepository
 
 if TYPE_CHECKING:
     from civicos_api.config import Settings
+
+
+logger = logging.getLogger(__name__)
 
 
 class AuthenticationError(PermissionError):
@@ -194,7 +199,19 @@ class Authenticator:
             or self._user_repository is None
         ):
             raise AuthenticationError("Founder-secret authentication is not configured")
-        if not secrets.compare_digest(supplied_secret, self._token_verifier.secret):
+        configured_secret = self._token_verifier.secret
+        submitted_hash = hashlib.sha256(supplied_secret.encode("utf-8")).digest()
+        configured_hash = hashlib.sha256(configured_secret.encode("utf-8")).digest()
+        hashes_match = secrets.compare_digest(submitted_hash, configured_hash)
+        # Temporary production diagnostic. Do not log either secret or either digest.
+        logger.info(
+            "founder_login_secret_comparison configured_secret_length=%d "
+            "submitted_secret_length=%d sha256_hashes_match=%s",
+            len(configured_secret),
+            len(supplied_secret),
+            hashes_match,
+        )
+        if not hashes_match:
             raise AuthenticationError("The founder secret is invalid")
         organization_id = await self._user_repository.resolve_founder_organization(
             external_subject=self._token_verifier.external_subject,

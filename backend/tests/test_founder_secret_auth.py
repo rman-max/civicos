@@ -1,10 +1,14 @@
+import asyncio
+import logging
+from typing import cast
 from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
 
-from civicos_api.auth import FounderSecretTokenVerifier
+from civicos_api.auth import AuthenticationError, Authenticator, FounderSecretTokenVerifier
 from civicos_api.config import Settings
+from civicos_api.users import PostgresUserRepository
 
 
 def founder_settings(**overrides: object) -> Settings:
@@ -41,3 +45,23 @@ def test_founder_tokens_are_short_lived_and_bound_to_the_configured_founder() ->
     assert expires_in == 3600
     assert verified.external_subject == "civicos-founder"
     assert verified.organization_id == organization_id
+
+
+def test_founder_login_logs_only_safe_secret_comparison_diagnostics(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    configured_secret = "a" * 64
+    authenticator = Authenticator(
+        founder_settings(CIVICOS_FOUNDER_AUTH_SECRET=configured_secret),
+        cast(PostgresUserRepository, object()),
+    )
+
+    with caplog.at_level(logging.INFO, logger="civicos_api.auth"):
+        with pytest.raises(AuthenticationError, match="founder secret is invalid"):
+            asyncio.run(authenticator.login_founder("not-the-configured-secret"))
+
+    assert "configured_secret_length=64" in caplog.text
+    assert "submitted_secret_length=25" in caplog.text
+    assert "sha256_hashes_match=False" in caplog.text
+    assert configured_secret not in caplog.text
+    assert "not-the-configured-secret" not in caplog.text
