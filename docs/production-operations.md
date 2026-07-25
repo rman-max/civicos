@@ -33,7 +33,7 @@ The frontend currently uses mock data. Connect an approved OIDC authorization-co
 
 1. Build immutable frontend, API, and ingestion images in CI; scan and sign them in the registry.
 2. Put database, OIDC, metrics, and object-storage settings in the deployment secret manager.
-3. Apply migrations `0001`–`0010` before application traffic. Railway API deployments run the checksum-tracked pre-deploy migration command automatically; other targets use `psql -v ON_ERROR_STOP=1`. Apply the St. Joseph County seed with the provisioner account separately.
+3. Apply migrations `0001`–`0011` before application traffic. Railway API deployments run the checksum-tracked pre-deploy migration command automatically; other targets use `psql -v ON_ERROR_STOP=1`. Apply the St. Joseph County seed with the provisioner account separately.
 4. Deploy at least two API replicas behind TLS ingress. Restrict `/readyz` to the platform health checker.
 5. Expose `/metrics` only to the monitoring network with `Authorization: Bearer $CIVICOS_METRICS_TOKEN`.
 6. Start discovery only after scoped database and object-storage permissions are verified; review its initial source-health results before public launch.
