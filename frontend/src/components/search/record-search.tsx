@@ -104,8 +104,8 @@ export function RecordSearch() {
   if (!signedIn || state === "signed-out") {
     return (
       <Notice className="mt-8" title="Private search access required">
-        Sign in to Founder Intelligence first, then return here to search the live civic record. {" "}
-        <Link className="font-medium text-ink underline" href="/founder">Open Founder Intelligence</Link>
+        Sign in once to Founder Intelligence. You will return to search automatically. {" "}
+        <Link className="font-medium text-ink underline" href="/founder?returnTo=/search">Open Founder Intelligence</Link>
       </Notice>
     );
   }

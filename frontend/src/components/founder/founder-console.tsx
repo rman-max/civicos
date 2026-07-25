@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
+import { useRouter } from "next/navigation";
 
 import { PageContainer } from "@/components/layout/page-container";
 import { PageHeader } from "@/components/layout/page-header";
@@ -13,6 +14,11 @@ import { SectionHeading } from "@/components/ui/typography";
 import { founderAccessTokenStorageKey } from "@/lib/founder-session";
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
+
+function requestedReturnPath(): string | null {
+  const value = new URLSearchParams(window.location.search).get("returnTo");
+  return value?.startsWith("/") && !value.startsWith("//") ? value : null;
+}
 
 interface Opportunity {
   id: string;
@@ -54,6 +60,7 @@ async function request<T>(path: string, token: string): Promise<T> {
 }
 
 export function FounderConsole() {
+  const router = useRouter();
   const [state, setState] = useState<ConsoleState>("checking");
   const [secret, setSecret] = useState("");
   const [error, setError] = useState<string>();
@@ -118,6 +125,11 @@ export function FounderConsole() {
       const result = (await response.json()) as { access_token: string };
       window.sessionStorage.setItem(founderAccessTokenStorageKey, result.access_token);
       setSecret("");
+      const returnTo = requestedReturnPath();
+      if (returnTo) {
+        router.replace(returnTo);
+        return;
+      }
       await load(result.access_token);
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : "Founder login failed.");
