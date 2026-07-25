@@ -181,4 +181,6 @@ class ScanSummary:
     pages_crawled: int = 0
     documents_discovered: int = 0
     documents_changed: int = 0
+    documents_skipped: int = 0
+    documents_indexed: int = 0
     observed_at: datetime = field(default_factory=datetime.now)

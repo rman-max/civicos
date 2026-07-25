@@ -82,67 +82,67 @@ WITH organization AS (
       'st-joseph-county', 'County Government', 'St. Joseph County Government',
       'https://www.sjcindiana.gov/',
       '{"respect_robots": true, "allowed_path_prefixes": ["/"], "max_content_bytes": 12000000}'::jsonb,
-      43200, 40, 20
+      10800, 40, 20
     ),
     (
       'st-joseph-county', 'Public Meetings', 'St. Joseph County Public Meetings',
       'https://www.sjcindiana.gov/AgendaCenter',
       '{"respect_robots": true, "allowed_path_prefixes": ["/AgendaCenter", "/Calendar.aspx", "/DocumentCenter"], "max_content_bytes": 12000000}'::jsonb,
-      3600, 60, 20
+      10800, 60, 20
     ),
     (
       'st-joseph-county', 'County Council', 'St. Joseph County Council',
       'https://www.sjcindiana.gov/AgendaCenter/County-Council-4',
       '{"respect_robots": true, "allowed_path_prefixes": ["/AgendaCenter/County-Council-4", "/AgendaCenter/ViewFile", "/DocumentCenter"], "max_content_bytes": 12000000}'::jsonb,
-      3600, 30, 20
+      10800, 30, 20
     ),
     (
       'st-joseph-county', 'Board of Commissioners', 'St. Joseph County Commissioners',
       'https://www.sjcindiana.gov/AgendaCenter/Board-of-Commissioners-5',
       '{"respect_robots": true, "allowed_path_prefixes": ["/AgendaCenter/Board-of-Commissioners-5", "/AgendaCenter/ViewFile", "/DocumentCenter"], "max_content_bytes": 12000000}'::jsonb,
-      3600, 30, 20
+      10800, 30, 20
     ),
     (
       'st-joseph-county', 'Area Plan Commission', 'St. Joseph County Planning Meetings',
       'https://www.sjcindiana.gov/AgendaCenter/Search/?CIDs=10%2C2%2C15%2C&dateRange=&dateSelector=&endDate=&startDate=&term=',
       '{"respect_robots": true, "allowed_path_prefixes": ["/AgendaCenter/Search", "/AgendaCenter/ViewFile", "/DocumentCenter"], "max_content_bytes": 12000000}'::jsonb,
-      14400, 35, 20
+      10800, 35, 20
     ),
     (
       'st-joseph-county', 'Assessor', 'St. Joseph County Assessor Data Information',
       'https://www.sjcindiana.gov/1443/Data-Extract-Search-Information',
       '{"respect_robots": true, "allowed_path_prefixes": ["/1443/Data-Extract-Search-Information", "/DocumentCenter"], "max_content_bytes": 12000000}'::jsonb,
-      43200, 20, 20
+      10800, 20, 20
     ),
     (
       'st-joseph-county', 'Recorder', 'St. Joseph County Recorder eRecordings',
       'https://www.sjcindiana.gov/779/eRecordings',
       '{"respect_robots": true, "allowed_path_prefixes": ["/779/eRecordings", "/DocumentCenter"], "max_content_bytes": 12000000}'::jsonb,
-      86400, 20, 20
+      10800, 20, 20
     ),
     (
       'st-joseph-county', 'Health Department', 'St. Joseph County Health Department Meetings',
       'https://www.in.gov/localhealth/stjosephcounty/meetings-and-agendas/',
       '{"respect_robots": true, "allowed_path_prefixes": ["/localhealth/stjosephcounty", "/localhealth/files"], "max_content_bytes": 12000000}'::jsonb,
-      14400, 30, 20
+      10800, 30, 20
     ),
     (
       'st-joseph-county', 'Election Board', 'St. Joseph County Election Board',
       'https://www.sjcindiana.gov/AgendaCenter/Election-Board-11',
       '{"respect_robots": true, "allowed_path_prefixes": ["/AgendaCenter/Election-Board-11", "/AgendaCenter/ViewFile", "/DocumentCenter"], "max_content_bytes": 12000000}'::jsonb,
-      7200, 30, 20
+      10800, 30, 20
     ),
     (
       'south-bend', 'City of South Bend', 'South Bend News and Public Meetings',
       'https://southbendin.gov/news-and-public-meetings/',
       '{"respect_robots": true, "allowed_path_prefixes": ["/news-and-public-meetings", "/wp-content/uploads"], "max_content_bytes": 12000000}'::jsonb,
-      14400, 35, 20
+      10800, 35, 20
     ),
     (
       'mishawaka', 'City of Mishawaka', 'Mishawaka Agendas and Minutes',
       'https://mishawaka.in.gov/government/agendas-minutes/',
       '{"respect_robots": true, "allowed_path_prefixes": ["/"], "max_content_bytes": 12000000}'::jsonb,
-      14400, 35, 20
+      10800, 35, 20
     )
 ), resolved_connectors AS (
   SELECT organization.id AS organization_id, municipality.id AS municipality_id,

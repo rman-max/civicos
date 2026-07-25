@@ -10,17 +10,17 @@ The seed is idempotent and non-destructive: later runs insert only missing recor
 
 | Coverage | Official entry point | Interval | Page cap | Scope |
 |---|---|---:|---:|---|
-| County government | [St. Joseph County](https://www.sjcindiana.gov/) | 12 hours | 40 | County site |
-| Public meetings | [Agenda Center](https://www.sjcindiana.gov/AgendaCenter) | 1 hour | 60 | Agenda, calendar, and document endpoints |
-| County Council | [County Council Agenda Center](https://www.sjcindiana.gov/AgendaCenter/County-Council-4) | 1 hour | 30 | Council agenda and document endpoints |
-| Commissioners | [Board of Commissioners Agenda Center](https://www.sjcindiana.gov/AgendaCenter/Board-of-Commissioners-5) | 1 hour | 30 | Commissioners agenda and document endpoints |
-| Planning | [Planning meeting search](https://www.sjcindiana.gov/AgendaCenter/Search/?CIDs=10%2C2%2C15%2C&dateRange=&dateSelector=&endDate=&startDate=&term=) | 4 hours | 35 | Planning meeting results and documents |
-| Assessor | [Data extract and search information](https://www.sjcindiana.gov/1443/Data-Extract-Search-Information) | 12 hours | 20 | Assessor information and documents |
-| Recorder | [eRecordings](https://www.sjcindiana.gov/779/eRecordings) | 24 hours | 20 | Recorder information and documents |
-| Health Department | [Meetings and agendas](https://www.in.gov/localhealth/stjosephcounty/meetings-and-agendas/) | 4 hours | 30 | County health path and its document endpoint |
-| Elections | [Election Board Agenda Center](https://www.sjcindiana.gov/AgendaCenter/Election-Board-11) | 2 hours | 30 | Election Board agenda and document endpoints |
-| South Bend | [News and public meetings](https://southbendin.gov/news-and-public-meetings/) | 4 hours | 35 | Public-meeting page and document uploads |
-| Mishawaka | [Agendas and minutes](https://mishawaka.in.gov/government/agendas-minutes/) | 4 hours | 35 | Site, bounded by a page cap |
+| County government | [St. Joseph County](https://www.sjcindiana.gov/) | 3 hours | 40 | County site |
+| Public meetings | [Agenda Center](https://www.sjcindiana.gov/AgendaCenter) | 3 hours | 60 | Agenda, calendar, and document endpoints |
+| County Council | [County Council Agenda Center](https://www.sjcindiana.gov/AgendaCenter/County-Council-4) | 3 hours | 30 | Council agenda and document endpoints |
+| Commissioners | [Board of Commissioners Agenda Center](https://www.sjcindiana.gov/AgendaCenter/Board-of-Commissioners-5) | 3 hours | 30 | Commissioners agenda and document endpoints |
+| Planning | [Planning meeting search](https://www.sjcindiana.gov/AgendaCenter/Search/?CIDs=10%2C2%2C15%2C&dateRange=&dateSelector=&endDate=&startDate=&term=) | 3 hours | 35 | Planning meeting results and documents |
+| Assessor | [Data extract and search information](https://www.sjcindiana.gov/1443/Data-Extract-Search-Information) | 3 hours | 20 | Assessor information and documents |
+| Recorder | [eRecordings](https://www.sjcindiana.gov/779/eRecordings) | 3 hours | 20 | Recorder information and documents |
+| Health Department | [Meetings and agendas](https://www.in.gov/localhealth/stjosephcounty/meetings-and-agendas/) | 3 hours | 30 | County health path and its document endpoint |
+| Elections | [Election Board Agenda Center](https://www.sjcindiana.gov/AgendaCenter/Election-Board-11) | 3 hours | 30 | Election Board agenda and document endpoints |
+| South Bend | [News and public meetings](https://southbendin.gov/news-and-public-meetings/) | 3 hours | 35 | Public-meeting page and document uploads |
+| Mishawaka | [Agendas and minutes](https://mishawaka.in.gov/government/agendas-minutes/) | 3 hours | 35 | Site, bounded by a page cap |
 
 Each connector follows only its official host, uses HTTPS, honors `robots.txt`, rejects off-domain redirects and credentialed URLs, and has a 12 MB per-response limit. `allowed_path_prefixes` narrows County sources to their pertinent official record areas. The page caps make routine scans predictable even if an upstream site changes its navigation.
 

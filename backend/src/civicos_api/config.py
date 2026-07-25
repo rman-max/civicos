@@ -79,6 +79,9 @@ class Settings(BaseSettings):
     search_max_limit: int = Field(
         default=50, ge=1, le=100, validation_alias="CIVICOS_SEARCH_MAX_LIMIT"
     )
+    ingestion_refresh_cooldown_seconds: int = Field(
+        default=300, ge=60, le=86400, validation_alias="CIVICOS_INGESTION_REFRESH_COOLDOWN_SECONDS"
+    )
     assistant_retrieval_limit: int = Field(
         default=8, ge=1, le=20, validation_alias="CIVICOS_ASSISTANT_RETRIEVAL_LIMIT"
     )

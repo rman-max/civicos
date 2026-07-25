@@ -34,6 +34,11 @@ class DiscoveryService:
         await self.run_due_vector_index_jobs(limit=limit)
         return len(jobs)
 
+    async def record_heartbeat(self, worker_id: str) -> None:
+        """Record liveness without exposing the worker through the public API."""
+
+        await self._repository.heartbeat(worker_id)
+
     async def run_due_vector_index_jobs(self, *, limit: int = 5) -> int:
         if self._vector_indexer is None:
             return 0
@@ -74,12 +79,17 @@ class DiscoveryService:
                 )
                 summary.documents_discovered += 1
                 summary.documents_changed += int(persisted.changed)
+                summary.documents_skipped += int(not persisted.changed)
+                # PostgreSQL generated FTS vectors make every changed version searchable immediately.
+                summary.documents_indexed += int(persisted.changed)
             await self._repository.complete_job(
                 job=job,
                 scan_run_id=scan_run_id,
                 pages_crawled=summary.pages_crawled,
                 documents_discovered=summary.documents_discovered,
                 documents_changed=summary.documents_changed,
+                documents_skipped=summary.documents_skipped,
+                documents_indexed=summary.documents_indexed,
             )
         except Exception as error:
             logger.exception("Discovery scan failed", extra={"source_id": str(job.source.id)})

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState, useSyncExternalStore } from "react";
+import { FormEvent, useEffect, useState, useSyncExternalStore } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
@@ -26,6 +26,13 @@ interface SearchResult {
 interface SearchResponse {
   results: SearchResult[];
   semantic_available: boolean;
+}
+
+interface IngestionStatus {
+  document_count: number;
+  last_corpus_update: string | null;
+  failed_connector_count: number;
+  indexing_mode: string;
 }
 
 type SearchState = "signed-out" | "idle" | "loading" | "ready" | "failure";
@@ -53,6 +60,39 @@ export function RecordSearch() {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [semanticAvailable, setSemanticAvailable] = useState(true);
   const [error, setError] = useState<string>();
+  const [ingestionStatus, setIngestionStatus] = useState<IngestionStatus>();
+  const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    if (!signedIn || !apiBaseUrl) return;
+    const token = window.sessionStorage.getItem(founderAccessTokenStorageKey);
+    if (!token) return;
+    void fetch(`${apiBaseUrl}/v1/founder/ingestion/status`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }).then(async (response) => {
+      if (response.ok) setIngestionStatus((await response.json()) as IngestionStatus);
+    });
+  }, [signedIn]);
+
+  async function refreshSources() {
+    const token = window.sessionStorage.getItem(founderAccessTokenStorageKey);
+    if (!token || !apiBaseUrl) return;
+    setRefreshing(true);
+    setError(undefined);
+    try {
+      const response = await fetch(`${apiBaseUrl}/v1/founder/ingestion/runs`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: "{}",
+      });
+      if (!response.ok) throw new Error("A refresh is already running or sources are unavailable.");
+      setError("Refresh queued. The civic record will update as connectors finish.");
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : "Could not refresh sources.");
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   async function submitSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -112,6 +152,13 @@ export function RecordSearch() {
 
   return (
     <>
+      <section className="mt-8 flex flex-wrap items-end justify-between gap-4 border-y border-rule py-4" aria-label="Corpus freshness">
+        <div className="text-sm text-ink-muted">
+          <p><span className="font-medium text-ink">{ingestionStatus?.document_count ?? "—"}</span> searchable documents · {ingestionStatus?.indexing_mode ?? "keyword"} indexing</p>
+          <p className="mt-1">Last corpus update: {ingestionStatus?.last_corpus_update ? new Date(ingestionStatus.last_corpus_update).toLocaleString() : "not yet ingested"}{ingestionStatus?.failed_connector_count ? ` · ${ingestionStatus.failed_connector_count} connector failures` : ""}</p>
+        </div>
+        <Button disabled={refreshing} onClick={refreshSources} variant="secondary">{refreshing ? "Queueing refresh…" : "Refresh sources"}</Button>
+      </section>
       <form className="mt-8 max-w-3xl" onSubmit={submitSearch} aria-label="Search records">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
           <TextInput

@@ -48,9 +48,13 @@ class DiscoveryRepository(Protocol):
         pages_crawled: int,
         documents_discovered: int,
         documents_changed: int,
+        documents_skipped: int,
+        documents_indexed: int,
     ) -> None: ...
 
     async def fail_job(self, *, job: DiscoveryJob, scan_run_id: UUID | None, error: str) -> None: ...
+
+    async def heartbeat(self, worker_id: str) -> None: ...
 
     async def claim_vector_index_jobs(self, *, limit: int) -> list[VectorIndexJob]: ...
 
@@ -86,6 +90,19 @@ class PostgresDiscoveryRepository:
                 row = await cursor.fetchone()
                 if row is None:
                     raise RuntimeError("Could not create a source scan run")
+                await cursor.execute(
+                    """UPDATE civic.ingestion_run_sources SET status = 'running', started_at = now(), scan_run_id = %s
+                    WHERE organization_id = %s AND source_id = %s AND status = 'queued'""",
+                    (row["id"], job.source.organization_id, job.source.id),
+                )
+                await cursor.execute(
+                    """UPDATE civic.ingestion_runs AS run SET status = 'running', started_at = COALESCE(started_at, now())
+                    WHERE run.organization_id = %s AND run.status = 'queued' AND EXISTS (
+                      SELECT 1 FROM civic.ingestion_run_sources source
+                      WHERE source.ingestion_run_id = run.id AND source.source_id = %s AND source.status = 'running'
+                    )""",
+                    (job.source.organization_id, job.source.id),
+                )
         return UUID(str(row["id"]))
 
     async def get_processing_context(self, job: DiscoveryJob) -> ProcessingContext:
@@ -604,16 +621,29 @@ class PostgresDiscoveryRepository:
         pages_crawled: int,
         documents_discovered: int,
         documents_changed: int,
+        documents_skipped: int,
+        documents_indexed: int,
     ) -> None:
         async with await self._connection() as connection, connection.transaction():
             await self._set_organization(connection, job.source.organization_id)
             async with connection.cursor() as cursor:
                 await cursor.execute(
                     """UPDATE civic.source_scan_runs SET status = 'completed', completed_at = now(),
-                    pages_crawled = %s, documents_discovered = %s, documents_changed = %s
+                    pages_crawled = %s, documents_discovered = %s, documents_changed = %s,
+                    documents_skipped = %s, documents_indexed = %s
                     WHERE id = %s AND organization_id = %s""",
-                    (pages_crawled, documents_discovered, documents_changed, scan_run_id, job.source.organization_id),
+                    (pages_crawled, documents_discovered, documents_changed, documents_skipped,
+                     documents_indexed, scan_run_id, job.source.organization_id),
                 )
+                await cursor.execute(
+                    """UPDATE civic.ingestion_run_sources SET status = 'completed', completed_at = now(),
+                    pages_crawled = %s, documents_discovered = %s, documents_changed = %s,
+                    documents_skipped = %s, documents_indexed = %s
+                    WHERE organization_id = %s AND source_id = %s AND scan_run_id = %s AND status = 'running'""",
+                    (pages_crawled, documents_discovered, documents_changed, documents_skipped,
+                     documents_indexed, job.source.organization_id, job.source.id, scan_run_id),
+                )
+                await self._complete_ingestion_runs(cursor, job.source.organization_id)
                 await cursor.execute(
                     """UPDATE civic.discovery_jobs SET run_after = now() + make_interval(secs => %s),
                     lease_token = NULL, leased_until = NULL, last_error = NULL
@@ -631,12 +661,42 @@ class PostgresDiscoveryRepository:
                         error_message = %s WHERE id = %s AND organization_id = %s""",
                         (error[:4000], scan_run_id, job.source.organization_id),
                     )
+                    await cursor.execute(
+                        """UPDATE civic.ingestion_run_sources SET status = 'failed', completed_at = now(), error_message = %s
+                        WHERE organization_id = %s AND source_id = %s AND scan_run_id = %s AND status = 'running'""",
+                        (error[:4000], job.source.organization_id, job.source.id, scan_run_id),
+                    )
+                    await self._complete_ingestion_runs(cursor, job.source.organization_id)
                 await cursor.execute(
                     """UPDATE civic.discovery_jobs SET run_after = now() + interval '60 seconds' *
                     LEAST(60, power(2, attempt_count)), lease_token = NULL, leased_until = NULL,
                     last_error = %s WHERE id = %s AND organization_id = %s AND lease_token = %s""",
                     (error[:4000], job.id, job.source.organization_id, job.lease_token),
                 )
+
+    async def heartbeat(self, worker_id: str) -> None:
+        async with await self._connection() as connection:
+            await connection.execute(
+                """INSERT INTO civic.worker_heartbeats (worker_id, last_seen_at, last_scheduled_poll_at)
+                VALUES (%s, now(), now())
+                ON CONFLICT (worker_id) DO UPDATE SET last_seen_at = now(), last_scheduled_poll_at = now()""",
+                (worker_id,),
+            )
+
+    async def _complete_ingestion_runs(
+        self, cursor: psycopg.AsyncCursor[dict[str, Any]], organization_id: UUID
+    ) -> None:
+        await cursor.execute(
+            """UPDATE civic.ingestion_runs AS run SET status = CASE
+                  WHEN EXISTS (SELECT 1 FROM civic.ingestion_run_sources source
+                    WHERE source.ingestion_run_id = run.id AND source.status = 'completed') THEN 'completed'
+                  ELSE 'failed' END,
+                completed_at = now()
+              WHERE run.organization_id = %s AND run.status IN ('queued', 'running')
+                AND NOT EXISTS (SELECT 1 FROM civic.ingestion_run_sources source
+                  WHERE source.ingestion_run_id = run.id AND source.status IN ('queued', 'running'))""",
+            (organization_id,),
+        )
 
     async def claim_vector_index_jobs(self, *, limit: int) -> list[VectorIndexJob]:
         async with await self._connection() as connection:

@@ -46,6 +46,7 @@ from civicos_api.founder import (
     FounderWatchlist,
     PostgresFounderIntelligenceRepository,
 )
+from civicos_api.ingestion import IngestionControlError, PostgresIngestionRepository
 from civicos_api.notebooks import (
     Notebook,
     NotebookEntry,
@@ -115,6 +116,7 @@ class SearchResultResponse(BaseModel):
     canonical_url: str | None
     department_id: UUID | None
     published_at: date | None
+    ingested_at: datetime | None
     excerpt: str
     score: float
     match_kind: str
@@ -400,6 +402,21 @@ class FounderBriefResponse(BaseModel):
     generated_at: datetime
 
 
+class CreateIngestionRunRequest(BaseModel):
+    source_id: UUID | None = None
+
+
+class IngestionRunResponse(BaseModel):
+    id: UUID
+    status: str
+    request_kind: str
+    requested_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    error_message: str | None
+    sources: list[dict[str, Any]]
+
+
 @lru_cache
 def get_search_service() -> HybridSearchService | None:
     if settings.database_url is None:
@@ -496,6 +513,13 @@ def get_founder_intelligence_repository() -> PostgresFounderIntelligenceReposito
     if settings.database_url is None:
         return None
     return PostgresFounderIntelligenceRepository(settings.database_url)
+
+
+@lru_cache
+def get_ingestion_repository() -> PostgresIngestionRepository | None:
+    if settings.database_url is None:
+        return None
+    return PostgresIngestionRepository(settings.database_url)
 
 
 authenticator = Authenticator(settings, get_user_repository())
@@ -811,6 +835,75 @@ async def latest_founder_brief(
     return FounderBriefResponse.model_validate(_founder_brief_payload(brief))
 
 
+def _require_tenant_admin(role_key: str) -> None:
+    if role_key != "tenant_admin":
+        raise HTTPException(
+            status_code=403, detail="Founder ingestion controls require a tenant administrator"
+        )
+
+
+@app.post("/v1/founder/ingestion/runs", response_model=IngestionRunResponse, status_code=202)
+async def create_ingestion_run(
+    request: CreateIngestionRunRequest,
+    organization_id: Annotated[UUID, Header(alias="X-CivicOS-Organization-ID")],
+    user_id: Annotated[UUID, Header(alias="X-CivicOS-User-ID")],
+    role_key: Annotated[str, Header(alias="X-CivicOS-Role")],
+) -> IngestionRunResponse:
+    _require_tenant_admin(role_key)
+    repository = get_ingestion_repository()
+    if repository is None:
+        raise HTTPException(status_code=503, detail="Ingestion storage is not configured")
+    try:
+        payload = await repository.enqueue(
+            organization_id=organization_id,
+            user_id=user_id,
+            source_id=request.source_id,
+            cooldown_seconds=settings.ingestion_refresh_cooldown_seconds,
+        )
+    except IngestionControlError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return IngestionRunResponse.model_validate(payload)
+
+
+@app.get("/v1/founder/ingestion/runs/{run_id}", response_model=IngestionRunResponse)
+async def get_ingestion_run(
+    run_id: UUID,
+    organization_id: Annotated[UUID, Header(alias="X-CivicOS-Organization-ID")],
+    user_id: Annotated[UUID, Header(alias="X-CivicOS-User-ID")],
+    role_key: Annotated[str, Header(alias="X-CivicOS-Role")],
+) -> IngestionRunResponse:
+    _require_tenant_admin(role_key)
+    repository = get_ingestion_repository()
+    if repository is None:
+        raise HTTPException(status_code=503, detail="Ingestion storage is not configured")
+    try:
+        payload = await repository.run(
+            organization_id=organization_id, user_id=user_id, run_id=run_id
+        )
+    except IngestionControlError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return IngestionRunResponse.model_validate(payload)
+
+
+@app.get("/v1/founder/ingestion/status")
+async def get_ingestion_status(
+    organization_id: Annotated[UUID, Header(alias="X-CivicOS-Organization-ID")],
+    user_id: Annotated[UUID, Header(alias="X-CivicOS-User-ID")],
+    role_key: Annotated[str, Header(alias="X-CivicOS-Role")],
+) -> dict[str, Any]:
+    _require_tenant_admin(role_key)
+    repository = get_ingestion_repository()
+    if repository is None:
+        raise HTTPException(status_code=503, detail="Ingestion storage is not configured")
+    return await repository.status(
+        organization_id=organization_id,
+        user_id=user_id,
+        semantic_available=bool(
+            settings.qdrant_url and settings.embedding_base_url and settings.embedding_model
+        ),
+    )
+
+
 @app.get("/v1/search", response_model=SearchResponseModel)
 async def search_documents(
     query: Annotated[str, Query(min_length=2, max_length=500)],
@@ -822,6 +915,9 @@ async def search_documents(
     department_id: Annotated[list[UUID] | None, Query()] = None,
     topic_id: Annotated[list[UUID] | None, Query()] = None,
     source_id: Annotated[list[UUID] | None, Query()] = None,
+    municipality_id: Annotated[list[UUID] | None, Query()] = None,
+    document_type: Annotated[list[str] | None, Query(max_length=50)] = None,
+    sort: Literal["relevance", "newest"] = "relevance",
 ) -> SearchResponseModel:
     """Search one organization; authentication must derive the tenant scope at the edge."""
 
@@ -840,6 +936,9 @@ async def search_documents(
         department_ids=tuple(department_id or []),
         topic_ids=tuple(topic_id or []),
         source_ids=tuple(source_id or []),
+        municipality_ids=tuple(municipality_id or []),
+        document_types=tuple(document_type or []),
+        newest_first=sort == "newest",
     )
     try:
         response = await service.search(
@@ -1170,6 +1269,7 @@ def _search_hit_payload(hit: SearchHit) -> dict[str, object]:
         "canonical_url": hit.canonical_url,
         "department_id": hit.department_id,
         "published_at": hit.published_at,
+        "ingested_at": hit.ingested_at,
         "excerpt": hit.excerpt,
         "score": hit.score,
         "match_kind": hit.match_kind,

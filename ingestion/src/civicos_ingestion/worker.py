@@ -3,17 +3,23 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import socket
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from civicos_ingestion.briefing import DailyBriefingService, PostgresBriefingRepository
+from civicos_ingestion.bootstrap import apply_st_joseph_seed
 from civicos_ingestion.config import Settings
 from civicos_ingestion.crawler import CivicCrawler
 from civicos_ingestion.founder_brief import FounderBriefService, PostgresFounderBriefRepository
 from civicos_ingestion.repository import PostgresDiscoveryRepository
 from civicos_ingestion.service import DiscoveryService
 from civicos_ingestion.storage import S3ObjectStore
-from civicos_ingestion.vector_index import OpenAICompatibleEmbeddingClient, QdrantVectorIndexer, VectorIndexer
+from civicos_ingestion.vector_index import (
+    OpenAICompatibleEmbeddingClient,
+    QdrantVectorIndexer,
+    VectorIndexer,
+)
 
 
 def build_service(settings: Settings) -> DiscoveryService:
@@ -69,6 +75,7 @@ async def run_worker(*, once: bool) -> None:
     briefing_service = build_briefing_service(settings)
     founder_brief_service = build_founder_brief_service(settings)
     while True:
+        await service.record_heartbeat(socket.gethostname())
         discovery_claimed = await service.run_due_jobs()
         briefing_claimed = await briefing_service.run_due_jobs(
             briefing_date=datetime.now(ZoneInfo(settings.briefing_timezone)).date()
@@ -86,8 +93,16 @@ async def run_worker(*, once: bool) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the CivicOS autonomous discovery worker.")
     parser.add_argument("--once", action="store_true", help="Claim and run one batch, then exit.")
+    parser.add_argument(
+        "--apply-seed",
+        action="store_true",
+        help="Apply the idempotent St. Joseph County source seed first.",
+    )
     arguments = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    if arguments.apply_seed:
+        settings = Settings()  # type: ignore[call-arg]
+        apply_st_joseph_seed(settings.database_url)
     asyncio.run(run_worker(once=arguments.once))
 
 

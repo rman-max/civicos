@@ -40,7 +40,7 @@ services:
       CIVICOS_API_RATE_LIMIT_PER_MINUTE: ${CIVICOS_API_RATE_LIMIT_PER_MINUTE:-120}
       CIVICOS_METRICS_TOKEN: ${CIVICOS_METRICS_TOKEN:-}
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
-      QDRANT_URL: ${QDRANT_URL:?set QDRANT_URL in .env}
+      QDRANT_URL: ${QDRANT_URL:-}
       QDRANT_API_KEY: ${QDRANT_API_KEY:-}
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:?set QDRANT_COLLECTION in .env}
       EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}
@@ -73,8 +73,8 @@ services:
 
   ingestion:
     build:
-      context: ../ingestion
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: ingestion/Dockerfile
     profiles: ["discovery"]
     environment:
       DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
@@ -84,7 +84,7 @@ services:
       S3_SECRET_KEY: ${S3_SECRET_KEY:?set S3_SECRET_KEY in .env}
       CIVICOS_DISCOVERY_POLL_SECONDS: ${CIVICOS_DISCOVERY_POLL_SECONDS:-5}
       CIVICOS_DISCOVERY_USER_AGENT: ${CIVICOS_DISCOVERY_USER_AGENT:-CivicOS-Discovery/0.1}
-      QDRANT_URL: ${QDRANT_URL:?set QDRANT_URL in .env}
+      QDRANT_URL: ${QDRANT_URL:-}
       QDRANT_API_KEY: ${QDRANT_API_KEY:-}
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:?set QDRANT_COLLECTION in .env}
       EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-}

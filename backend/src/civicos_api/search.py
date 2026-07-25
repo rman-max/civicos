@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Any, Protocol
 from uuid import UUID
@@ -33,6 +33,9 @@ class SearchFilters:
     department_ids: tuple[UUID, ...] = ()
     topic_ids: tuple[UUID, ...] = ()
     source_ids: tuple[UUID, ...] = ()
+    municipality_ids: tuple[UUID, ...] = ()
+    document_types: tuple[str, ...] = ()
+    newest_first: bool = False
 
 
 @dataclass(frozen=True)
@@ -48,6 +51,7 @@ class SearchHit:
     excerpt: str
     score: float
     match_kind: str
+    ingested_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -84,7 +88,7 @@ class PostgresSearchRepository:
             WITH terms AS (SELECT websearch_to_tsquery('english'::regconfig, %s) AS query),
             latest_versions AS (
               SELECT DISTINCT ON (organization_id, document_id)
-                organization_id, document_id, id, extracted_text, search_vector
+                organization_id, document_id, id, extracted_text, search_vector, created_at
               FROM civic.document_versions
               WHERE organization_id = %s
               ORDER BY organization_id, document_id, version_number DESC
@@ -92,7 +96,7 @@ class PostgresSearchRepository:
             SELECT document.id AS document_id, version.id AS document_version_id, document.title,
               document.document_type, source.name AS source_name, document.canonical_url,
               document.department_id,
-              document.published_at,
+              document.published_at, version.created_at AS ingested_at,
               ts_headline('english'::regconfig, coalesce(version.extracted_text, ''), terms.query,
                 'MaxFragments=2,MaxWords=18,MinWords=6') AS excerpt,
               ts_rank(document.search_vector, terms.query)
@@ -107,7 +111,8 @@ class PostgresSearchRepository:
             CROSS JOIN terms
             WHERE {" AND ".join(clauses)}
               AND (document.search_vector @@ terms.query OR version.search_vector @@ terms.query)
-            ORDER BY score DESC, document.published_at DESC NULLS LAST, document.id
+            ORDER BY {"document.published_at DESC NULLS LAST, score DESC" if filters.newest_first else "score DESC, document.published_at DESC NULLS LAST"},
+              document.id
             LIMIT %s
         """
         rows = await self._fetchall(
@@ -124,7 +129,7 @@ class PostgresSearchRepository:
         sql = f"""
             WITH latest_versions AS (
               SELECT DISTINCT ON (organization_id, document_id)
-                organization_id, document_id, id, extracted_text
+                organization_id, document_id, id, extracted_text, created_at
               FROM civic.document_versions
               WHERE organization_id = %s
               ORDER BY organization_id, document_id, version_number DESC
@@ -132,7 +137,7 @@ class PostgresSearchRepository:
             SELECT document.id AS document_id, version.id AS document_version_id, document.title,
               document.document_type, source.name AS source_name, document.canonical_url,
               document.department_id,
-              document.published_at,
+              document.published_at, version.created_at AS ingested_at,
               left(coalesce(version.extracted_text, ''), 320) AS excerpt, 0::real AS score
             FROM civic.documents AS document
             JOIN latest_versions AS version
@@ -169,6 +174,12 @@ class PostgresSearchRepository:
         if filters.source_ids:
             clauses.append("document.source_id = ANY(%s::uuid[])")
             parameters.append(list(filters.source_ids))
+        if filters.municipality_ids:
+            clauses.append("source.municipality_id = ANY(%s::uuid[])")
+            parameters.append(list(filters.municipality_ids))
+        if filters.document_types:
+            clauses.append("document.document_type = ANY(%s::text[])")
+            parameters.append(list(filters.document_types))
         if filters.topic_ids:
             clauses.append(
                 """EXISTS (
@@ -206,6 +217,7 @@ class PostgresSearchRepository:
             canonical_url=str(row["canonical_url"]) if row["canonical_url"] else None,
             department_id=UUID(str(row["department_id"])) if row["department_id"] else None,
             published_at=row["published_at"],
+            ingested_at=row["ingested_at"],
             excerpt=str(row["excerpt"]),
             score=float(row["score"]),
             match_kind=match_kind,
@@ -354,8 +366,11 @@ class HybridSearchService:
             )
         if mode is SearchMode.SEMANTIC:
             return SearchResponse(results=tuple(semantic_results[:limit]), semantic_available=True)
+        results = self._fuse(keyword_results, semantic_results, limit=limit)
+        if filters.newest_first:
+            results.sort(key=lambda hit: hit.published_at or date.min, reverse=True)
         return SearchResponse(
-            results=tuple(self._fuse(keyword_results, semantic_results, limit=limit)),
+            results=tuple(results),
             semantic_available=semantic_available,
         )
 

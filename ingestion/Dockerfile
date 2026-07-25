@@ -8,8 +8,9 @@ WORKDIR /app
 
 RUN addgroup --system civicos && adduser --system --ingroup civicos civicos
 
-COPY pyproject.toml ./
-COPY src ./src
+COPY ingestion/pyproject.toml ./
+COPY ingestion/src ./src
+COPY database/seeds /app/database/seeds
 RUN pip install --no-cache-dir .
 
 USER civicos
