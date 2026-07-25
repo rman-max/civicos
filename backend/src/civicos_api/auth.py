@@ -17,7 +17,8 @@ if TYPE_CHECKING:
     from civicos_api.config import Settings
 
 
-logger = logging.getLogger(__name__)
+# Application logging configures the `civicos` namespace, not the package name.
+logger = logging.getLogger("civicos.api.auth")
 
 
 class AuthenticationError(PermissionError):

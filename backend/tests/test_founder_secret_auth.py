@@ -11,6 +11,17 @@ from civicos_api.config import Settings
 from civicos_api.users import PostgresUserRepository
 
 
+class ListLogHandler(logging.Handler):
+    """Capture a logger with a non-propagating application parent in unit tests."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.messages.append(record.getMessage())
+
+
 def founder_settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
         "CIVICOS_ENVIRONMENT": "production",
@@ -47,21 +58,25 @@ def test_founder_tokens_are_short_lived_and_bound_to_the_configured_founder() ->
     assert verified.organization_id == organization_id
 
 
-def test_founder_login_logs_only_safe_secret_comparison_diagnostics(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+def test_founder_login_logs_only_safe_secret_comparison_diagnostics() -> None:
     configured_secret = "a" * 64
     authenticator = Authenticator(
         founder_settings(CIVICOS_FOUNDER_AUTH_SECRET=configured_secret),
         cast(PostgresUserRepository, object()),
     )
 
-    with caplog.at_level(logging.INFO, logger="civicos_api.auth"):
+    log_handler = ListLogHandler()
+    auth_logger = logging.getLogger("civicos.api.auth")
+    auth_logger.addHandler(log_handler)
+    try:
         with pytest.raises(AuthenticationError, match="founder secret is invalid"):
             asyncio.run(authenticator.login_founder("not-the-configured-secret"))
+    finally:
+        auth_logger.removeHandler(log_handler)
 
-    assert "configured_secret_length=64" in caplog.text
-    assert "submitted_secret_length=25" in caplog.text
-    assert "sha256_hashes_match=False" in caplog.text
-    assert configured_secret not in caplog.text
-    assert "not-the-configured-secret" not in caplog.text
+    diagnostic = "\n".join(log_handler.messages)
+    assert "configured_secret_length=64" in diagnostic
+    assert "submitted_secret_length=25" in diagnostic
+    assert "sha256_hashes_match=False" in diagnostic
+    assert configured_secret not in diagnostic
+    assert "not-the-configured-secret" not in diagnostic
