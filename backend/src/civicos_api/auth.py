@@ -171,6 +171,7 @@ class Authenticator:
     """Combines token verification with the authoritative CivicOS membership check."""
 
     def __init__(self, settings: Settings, user_repository: PostgresUserRepository | None) -> None:
+        self._settings = settings
         self._token_verifier: TokenVerifier | None
         if settings.auth_mode == "oidc":
             self._token_verifier = OidcTokenVerifier(settings)
@@ -214,13 +215,16 @@ class Authenticator:
         )
         if not hashes_match:
             raise AuthenticationError("The founder secret is invalid")
-        organization_id = await self._user_repository.resolve_founder_organization(
+        membership = await self._user_repository.ensure_founder_membership(
+            organization_slug=self._settings.founder_organization_slug,
+            organization_name=self._settings.founder_organization_name,
             external_subject=self._token_verifier.external_subject,
-            organization_slug=self._token_verifier.organization_slug,
+            email=self._settings.founder_email,
+            display_name=self._settings.founder_display_name,
         )
-        if organization_id is None:
+        if membership is None:
             raise AuthenticationError("The founder account is not provisioned or active")
-        return self._token_verifier.issue(organization_id)
+        return self._token_verifier.issue(membership.organization_id)
 
 
 def _principal_from_membership(

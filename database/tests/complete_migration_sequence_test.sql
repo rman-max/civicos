@@ -10,7 +10,8 @@ BEGIN
     'civic.enqueue_discovery_job()'::regprocedure,
     'civic.enqueue_vector_index_job()'::regprocedure,
     'civic.validate_knowledge_graph_edge()'::regprocedure,
-    'core.require_current_organization_admin()'::regprocedure
+    'core.require_current_organization_admin()'::regprocedure,
+    'core.ensure_founder_secret_principal(citext, text, text, citext, text)'::regprocedure
   ]
   LOOP
     IF required_function IS NULL THEN

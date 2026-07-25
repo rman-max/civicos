@@ -67,32 +67,34 @@ class PostgresUserRepository:
             role_key=str(row["role_key"]),
         )
 
-    async def resolve_founder_organization(
-        self, *, external_subject: str, organization_slug: str
-    ) -> UUID | None:
-        """Resolve only the configured active founder-admin membership."""
+    async def ensure_founder_membership(
+        self,
+        *,
+        organization_slug: str,
+        organization_name: str,
+        external_subject: str,
+        email: str,
+        display_name: str,
+    ) -> AuthenticatedMembership | None:
+        """Resolve the one founder identity through the RLS-safe database function."""
 
         async with await psycopg.AsyncConnection.connect(
             self._database_url, row_factory=dict_row
         ) as connection:
             cursor = await connection.execute(
                 """
-                SELECT organization.id
-                FROM core.organizations AS organization
-                JOIN core.organization_memberships AS membership
-                  ON membership.organization_id = organization.id
-                JOIN core.users AS member ON member.id = membership.user_id
-                WHERE organization.slug = %s
-                  AND organization.is_active
-                  AND member.external_subject = %s
-                  AND member.is_active
-                  AND membership.is_active
-                  AND membership.role_key = 'tenant_admin'
+                SELECT * FROM core.ensure_founder_secret_principal(%s, %s, %s, %s, %s)
                 """,
-                (organization_slug, external_subject),
+                (organization_slug, organization_name, external_subject, email, display_name),
             )
             row = await cursor.fetchone()
-        return UUID(str(row["id"])) if row is not None else None
+        if row is None:
+            return None
+        return AuthenticatedMembership(
+            user_id=UUID(str(row["user_id"])),
+            organization_id=UUID(str(row["organization_id"])),
+            role_key=str(row["role_key"]),
+        )
 
     async def list_users(self, *, organization_id: UUID, user_id: UUID) -> list[ManagedUser]:
         async with self._transaction(organization_id, user_id) as connection:

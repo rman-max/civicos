@@ -2,7 +2,7 @@
 
 ## Scope and ownership
 
-The schema is installed by ordered raw-SQL migrations. `0001_civic_core.up.sql` owns the core model; `0001_core_set_updated_at_compatibility.up.sql` establishes the trigger function required by the following migrations without changing an already-recorded initial migration; `0002_autonomous_discovery.up.sql` adds durable autonomous discovery; `0003_knowledge_graph.up.sql` adds the evidence-backed knowledge graph; `0004_hybrid_search.up.sql` adds hybrid search projections; `0005_research_notebooks.up.sql` adds saved searches and saved documents; `0006_daily_briefings.up.sql` adds daily briefings and in-app subscriptions; `0007_authentication_and_user_management.up.sql` adds active tenant memberships and OIDC identity-resolution functions; `0008_public_beta_feedback_and_analytics.up.sql` adds voluntary beta feedback with anonymous first-party events; and `0009_founder_intelligence.up.sql` adds private, evidence-bound commercial signals, opportunities, watchlist matches, and durable Founder Brief jobs. Raw SQL keeps the database boundary portable and does not couple the application to an ORM or migration runtime.
+The schema is installed by ordered raw-SQL migrations. `0001_civic_core.up.sql` owns the core model; `0001_core_set_updated_at_compatibility.up.sql` establishes the trigger function required by the following migrations without changing an already-recorded initial migration; `0002_autonomous_discovery.up.sql` adds durable autonomous discovery; `0003_knowledge_graph.up.sql` adds the evidence-backed knowledge graph; `0004_hybrid_search.up.sql` adds hybrid search projections; `0005_research_notebooks.up.sql` adds saved searches and saved documents; `0006_daily_briefings.up.sql` adds daily briefings and in-app subscriptions; `0007_authentication_and_user_management.up.sql` adds active tenant memberships and OIDC identity-resolution functions; `0008_public_beta_feedback_and_analytics.up.sql` adds voluntary beta feedback with anonymous first-party events; `0009_founder_intelligence.up.sql` adds private, evidence-bound commercial signals, opportunities, watchlist matches, and durable Founder Brief jobs; and `0010_founder_secret_principal.up.sql` adds the RLS-safe, idempotent founder-secret identity resolver. Raw SQL keeps the database boundary portable and does not couple the application to an ORM or migration runtime.
 
 | PostgreSQL schema | Owns |
 |---|---|
@@ -82,6 +82,7 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/migrations/0006_daily_briefi
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/migrations/0007_authentication_and_user_management.up.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/migrations/0008_public_beta_feedback_and_analytics.up.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/migrations/0009_founder_intelligence.up.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/migrations/0010_founder_secret_principal.up.sql
 ```
 
 Jurisdiction configuration is applied separately from schema migration. For the initial County deployment, use the privileged provisioning role to run `database/seeds/st_joseph_county_indiana.sql`; it adds approved municipalities, departments, sources, and their discovery jobs without changing existing configuration. See `../docs/st-joseph-county-indiana.md`.

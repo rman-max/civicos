@@ -6,9 +6,13 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from civicos_api.auth import AuthenticationError, Authenticator, FounderSecretTokenVerifier
+from civicos_api.auth import (
+    AuthenticationError,
+    Authenticator,
+    FounderSecretTokenVerifier,
+)
 from civicos_api.config import Settings
-from civicos_api.users import PostgresUserRepository
+from civicos_api.users import AuthenticatedMembership, PostgresUserRepository
 
 
 class ListLogHandler(logging.Handler):
@@ -20,6 +24,28 @@ class ListLogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         self.messages.append(record.getMessage())
+
+
+class FounderMembershipRepositoryStub:
+    async def ensure_founder_membership(
+        self,
+        *,
+        organization_slug: str,
+        organization_name: str,
+        external_subject: str,
+        email: str,
+        display_name: str,
+    ) -> AuthenticatedMembership:
+        assert organization_slug == "st-joseph-county-indiana"
+        assert organization_name == "St. Joseph County, Indiana"
+        assert external_subject == "civicos-founder"
+        assert email == "founder@civicos.local"
+        assert display_name == "CivicOS Founder"
+        return AuthenticatedMembership(
+            user_id=UUID("20000000-0000-0000-0000-000000000001"),
+            organization_id=UUID("10000000-0000-0000-0000-000000000001"),
+            role_key="tenant_admin",
+        )
 
 
 def founder_settings(**overrides: object) -> Settings:
@@ -56,6 +82,22 @@ def test_founder_tokens_are_short_lived_and_bound_to_the_configured_founder() ->
     assert expires_in == 3600
     assert verified.external_subject == "civicos-founder"
     assert verified.organization_id == organization_id
+
+
+def test_founder_login_provisions_or_resolves_the_membership_before_issuing_token() -> None:
+    configured_secret = "a" * 64
+    authenticator = Authenticator(
+        founder_settings(CIVICOS_FOUNDER_AUTH_SECRET=configured_secret),
+        cast(PostgresUserRepository, FounderMembershipRepositoryStub()),
+    )
+
+    token, expires_in = asyncio.run(authenticator.login_founder(configured_secret))
+
+    assert expires_in == 3600
+    verified = FounderSecretTokenVerifier(
+        founder_settings(CIVICOS_FOUNDER_AUTH_SECRET=configured_secret)
+    ).verify(f"Bearer {token}")
+    assert verified.organization_id == UUID("10000000-0000-0000-0000-000000000001")
 
 
 def test_founder_login_logs_only_safe_secret_comparison_diagnostics() -> None:

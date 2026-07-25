@@ -6,7 +6,7 @@ Accepted for the initial private production deployment.
 
 ## Decision
 
-When `CIVICOS_AUTH_MODE=founder_secret`, CivicOS exposes one private login endpoint which exchanges a Railway-held secret for a short-lived signed bearer token. It creates or verifies exactly one configured `tenant_admin` founder membership in the pre-deploy process. The database remains the authority for active user and tenant membership on every authenticated request.
+When `CIVICOS_AUTH_MODE=founder_secret`, CivicOS exposes one private login endpoint which exchanges a Railway-held secret for a short-lived signed bearer token. After the secret is verified, a narrowly scoped security-definer function creates or verifies exactly one configured `tenant_admin` founder membership before the token is issued. This avoids an unauthenticated direct read of tenant-isolated tables. The database remains the authority for active user and tenant membership on every authenticated request.
 
 ## Consequences
 
