@@ -39,6 +39,11 @@ class DiscoveryService:
 
         await self._repository.heartbeat(worker_id)
 
+    async def backfill_canonical_records(self) -> dict[str, int]:
+        """Reprocess raw evidence into canonical records without network access."""
+
+        return await self._repository.backfill_canonical_records()
+
     async def run_due_vector_index_jobs(self, *, limit: int = 5) -> int:
         if self._vector_indexer is None:
             return 0
@@ -60,28 +65,32 @@ class DiscoveryService:
             processing_context = await self._repository.get_processing_context(job)
             summary = ScanSummary(pages_crawled=result.pages_crawled)
             for resource in result.resources:
-                extracted = extract_document(
-                    media_type=resource.media_type,
-                    url=resource.final_url,
-                    body=resource.body,
-                )
-                processed = process_document(extracted, processing_context)
-                checksum = content_hash(resource.body)
-                storage_key = await self._object_store.put(
-                    checksum=checksum, media_type=resource.media_type, body=resource.body
-                )
-                persisted = await self._repository.persist_resource(
-                    job=job,
-                    scan_run_id=scan_run_id,
-                    resource=resource,
-                    processed=processed,
-                    storage_key=storage_key,
-                )
-                summary.documents_discovered += 1
-                summary.documents_changed += int(persisted.changed)
-                summary.documents_skipped += int(not persisted.changed)
-                # PostgreSQL generated FTS vectors make every changed version searchable immediately.
-                summary.documents_indexed += int(persisted.changed)
+                try:
+                    extracted = extract_document(
+                        media_type=resource.media_type,
+                        url=resource.final_url,
+                        body=resource.body,
+                    )
+                    processed = process_document(extracted, processing_context)
+                    checksum = content_hash(resource.body)
+                    storage_key = await self._object_store.put(
+                        checksum=checksum, media_type=resource.media_type, body=resource.body
+                    )
+                    persisted = await self._repository.persist_resource(
+                        job=job,
+                        scan_run_id=scan_run_id,
+                        resource=resource,
+                        processed=processed,
+                        storage_key=storage_key,
+                    )
+                    summary.documents_discovered += 1
+                    summary.documents_changed += int(persisted.changed)
+                    summary.documents_skipped += int(not persisted.changed)
+                    # PostgreSQL generated FTS vectors make every changed version searchable immediately.
+                    summary.documents_indexed += int(persisted.changed)
+                except Exception:
+                    # An extraction failure is isolated to its document; the next public record still proceeds.
+                    logger.exception("Document processing failed", extra={"source_url": resource.final_url})
             await self._repository.complete_job(
                 job=job,
                 scan_run_id=scan_run_id,

@@ -46,6 +46,11 @@ class FakeSemanticClient:
         return [(DOCUMENT_TWO, 0.95), (DOCUMENT_ONE, 0.80)]
 
 
+class FailingSemanticClient:
+    async def search(self, **_: object) -> list[tuple[UUID, float]]:
+        raise AssertionError("canonical search must not query raw-document vectors")
+
+
 def test_hybrid_search_fuses_keyword_and_semantic_results() -> None:
     service = HybridSearchService(repository=FakeRepository(), semantic_client=FakeSemanticClient())
 
@@ -80,3 +85,20 @@ def test_semantic_mode_requires_configured_semantic_client() -> None:
     except SearchUnavailableError:
         return
     raise AssertionError("Expected semantic search to require a configured semantic client")
+
+
+def test_canonical_search_defaults_to_postgres_keyword_results_when_qdrant_exists() -> None:
+    service = HybridSearchService(repository=FakeRepository(), semantic_client=FailingSemanticClient())
+
+    response = asyncio.run(
+        service.search(
+            organization_id=ORGANIZATION_ID,
+            query="river restoration",
+            filters=SearchFilters(),
+            mode=SearchMode.HYBRID,
+            limit=10,
+        )
+    )
+
+    assert [result.document_id for result in response.results] == [DOCUMENT_ONE, DOCUMENT_TWO]
+    assert not response.semantic_available

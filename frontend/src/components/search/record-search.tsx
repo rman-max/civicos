@@ -21,6 +21,15 @@ interface SearchResult {
   published_at: string | null;
   excerpt: string;
   match_kind: string;
+  canonical_record_id: string | null;
+  jurisdiction: string | null;
+  summary: string | null;
+  entities: string[];
+  addresses: string[];
+  money_amounts: string[];
+  deadlines: string[];
+  status: string | null;
+  evidence: Array<{ source_text: string; source_url: string; confidence: number; page_reference: string | null; section_reference: string | null }>;
 }
 
 interface SearchResponse {
@@ -62,6 +71,7 @@ export function RecordSearch() {
   const [error, setError] = useState<string>();
   const [ingestionStatus, setIngestionStatus] = useState<IngestionStatus>();
   const [refreshing, setRefreshing] = useState(false);
+  const [rawSources, setRawSources] = useState(false);
 
   useEffect(() => {
     if (!signedIn || !apiBaseUrl) return;
@@ -120,6 +130,7 @@ export function RecordSearch() {
           query: normalizedQuery,
           mode: "hybrid",
           limit: "20",
+          view: rawSources ? "raw" : "canonical",
         })}`,
         { headers: { Authorization: `Bearer ${token}` } },
       );
@@ -175,6 +186,10 @@ export function RecordSearch() {
             {state === "loading" ? "Searching…" : "Search"}
           </Button>
         </div>
+        <label className="mt-4 flex items-center gap-2 text-sm text-ink-muted">
+          <input checked={rawSources} onChange={(event) => setRawSources(event.target.checked)} type="checkbox" />
+          Show raw source documents instead of canonical civic records
+        </label>
       </form>
 
       {error ? <Notice className="mt-8" title="Search unavailable">{error}</Notice> : null}
@@ -203,14 +218,25 @@ export function RecordSearch() {
                     <p className="text-sm text-ink-muted">{result.match_kind} match</p>
                   </div>
                   <h3 className="mt-3 font-serif text-3xl tracking-[-0.025em] text-ink">{result.title}</h3>
-                  <p className="mt-3 max-w-3xl font-serif text-lg leading-8 text-ink-muted">{result.excerpt}</p>
+                  <p className="mt-3 max-w-3xl font-serif text-lg leading-8 text-ink-muted">{result.summary ?? result.excerpt}</p>
                   <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-ink-muted">
                     <span>{result.source_name ?? "Official public source"}</span>
                     <time>{formatDate(result.published_at)}</time>
+                    {result.jurisdiction ? <span>{result.jurisdiction}</span> : null}
+                    {result.status ? <span>Status: {result.status}</span> : null}
+                    {result.money_amounts[0] ? <span>{result.money_amounts[0]}</span> : null}
+                    {result.deadlines[0] ? <span>Deadline: {result.deadlines[0]}</span> : null}
                     {result.canonical_url ? (
                       <a className="font-medium text-ink underline" href={result.canonical_url} rel="noreferrer" target="_blank">Open original source</a>
                     ) : null}
                   </div>
+                  {result.entities.length || result.addresses.length || result.evidence.length ? (
+                    <div className="mt-3 text-sm text-ink-muted">
+                      {result.entities.length ? <p>Entities: {result.entities.join(", ")}</p> : null}
+                      {result.addresses.length ? <p>Location: {result.addresses.join(", ")}</p> : null}
+                      {result.evidence[0] ? <p className="mt-1">Evidence: “{result.evidence[0].source_text}”</p> : null}
+                    </div>
+                  ) : null}
                 </article>
               ))}
             </div>

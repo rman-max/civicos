@@ -59,7 +59,7 @@ PERSON_PATTERN = re.compile(
 )
 ORGANIZATION_PATTERN = re.compile(
     r"\b(?P<name>(?:[A-Z][\w&.'-]*\s+){0,5}"
-    r"(?:County|City|Town|Village|Department|Office|Board|Commission|Authority|University|School))\b"
+    r"(?:County|City|Town|Village|Department|Office|Board|Commission|Authority|University|School|Company|LLC|Inc\.))\b"
 )
 OFFICIAL_TITLES = {"mayor", "councilmember", "councilman", "councilwoman", "commissioner", "chair", "chairperson"}
 

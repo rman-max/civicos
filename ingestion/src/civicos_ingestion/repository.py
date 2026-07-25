@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -7,11 +8,17 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from civicos_ingestion.canonical import (
+    CanonicalRecordDraft,
+    canonical_signal_candidates,
+    canonicalize_document,
+)
 from civicos_ingestion.crawler import content_hash
 from civicos_ingestion.founder_intelligence import opportunity_score
 from civicos_ingestion.models import (
     DepartmentCandidate,
     DiscoveryJob,
+    ExtractedDocument,
     FetchedResource,
     GraphNodeCandidate,
     PersistedDocument,
@@ -21,6 +28,7 @@ from civicos_ingestion.models import (
     TopicCandidate,
     VectorIndexJob,
 )
+from civicos_ingestion.processing import process_document
 
 
 class DiscoveryRepository(Protocol):
@@ -61,6 +69,16 @@ class DiscoveryRepository(Protocol):
     async def complete_vector_index_job(self, job: VectorIndexJob) -> None: ...
 
     async def fail_vector_index_job(self, *, job: VectorIndexJob, error: str) -> None: ...
+
+    async def backfill_canonical_records(self, *, limit: int | None = None) -> dict[str, int]: ...
+
+
+@dataclass(frozen=True)
+class CanonicalPersistence:
+    record_id: UUID
+    version_id: UUID
+    change_ids: tuple[UUID, ...]
+    change_types: tuple[str, ...]
 
 
 class PostgresDiscoveryRepository:
@@ -284,13 +302,37 @@ class PostgresDiscoveryRepository:
                         document_version_id=version_id,
                         processed=processed,
                     )
+                    jurisdiction = await self._source_jurisdiction(
+                        cursor=cursor,
+                        organization_id=source.organization_id,
+                        source_id=source.id,
+                    )
+                    canonical_draft = canonicalize_document(
+                        processed=processed,
+                        source_agency=source.name,
+                        source_url=resource.final_url,
+                        jurisdiction=jurisdiction,
+                    )
+                    canonical = await self._persist_canonical_record(
+                        cursor=cursor,
+                        organization_id=source.organization_id,
+                        raw_document_id=document_id,
+                        raw_document_version_id=version_id,
+                        source_id=source.id,
+                        draft=canonical_draft,
+                    )
                     await self._persist_founder_intelligence(
                         cursor=cursor,
                         organization_id=source.organization_id,
                         document_id=document_id,
                         document_version_id=version_id,
                         source_url=resource.final_url,
-                        processed=processed,
+                        canonical_record_id=canonical.record_id,
+                        canonical_change_id=canonical.change_ids[0] if canonical.change_ids else None,
+                        candidates=canonical_signal_candidates(
+                            canonical_draft,
+                            change_types=canonical.change_types,
+                        ),
                     )
                 else:
                     if latest_version is None:
@@ -319,6 +361,205 @@ class PostgresDiscoveryRepository:
                     ),
                 )
         return PersistedDocument(document_id=document_id, version_id=version_id if changed else None, changed=changed)
+
+    async def _source_jurisdiction(
+        self,
+        *,
+        cursor: psycopg.AsyncCursor[dict[str, Any]],
+        organization_id: UUID,
+        source_id: UUID,
+    ) -> str | None:
+        await cursor.execute(
+            """
+            SELECT coalesce(municipality.name, organization.name) AS jurisdiction
+            FROM civic.sources AS source
+            JOIN core.organizations AS organization ON organization.id = source.organization_id
+            LEFT JOIN core.municipalities AS municipality
+              ON municipality.organization_id = source.organization_id AND municipality.id = source.municipality_id
+            WHERE source.organization_id = %s AND source.id = %s
+            """,
+            (organization_id, source_id),
+        )
+        row = await cursor.fetchone()
+        return str(row["jurisdiction"]) if row and row["jurisdiction"] else None
+
+    async def _persist_canonical_record(
+        self,
+        *,
+        cursor: psycopg.AsyncCursor[dict[str, Any]],
+        organization_id: UUID,
+        raw_document_id: UUID,
+        raw_document_version_id: UUID,
+        source_id: UUID | None,
+        draft: CanonicalRecordDraft,
+    ) -> CanonicalPersistence:
+        """Version a canonical projection; raw versions and evidence are never mutated."""
+
+        await cursor.execute(
+            """
+            SELECT record.id, record.current_version_id, version.snapshot
+            FROM civic.canonical_records AS record
+            LEFT JOIN civic.canonical_record_versions AS version
+              ON version.organization_id = record.organization_id AND version.id = record.current_version_id
+            WHERE record.organization_id = %s AND record.record_type = %s AND record.dedup_key = %s
+            FOR UPDATE
+            """,
+            (organization_id, draft.record_type, draft.dedup_key),
+        )
+        previous = await cursor.fetchone()
+        snapshot = self._canonical_snapshot(draft)
+        await cursor.execute(
+            """
+            INSERT INTO civic.canonical_records (
+              organization_id, raw_document_id, source_id, record_type, jurisdiction, source_agency, source_url,
+              source_document_id, dedup_key, title, published_at, event_date, effective_date, summary, key_facts,
+              entities, people, organizations, addresses, parcel_numbers, case_numbers, permit_numbers,
+              project_names, money_amounts, deadlines, actions, decisions, status, topics, typed_payload,
+              extraction_confidence, extraction_version, first_seen_at, last_seen_at
+            ) VALUES (
+              %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+              %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb,
+              %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s::jsonb, %s::jsonb, %s, %s, now(), now()
+            ) ON CONFLICT (organization_id, record_type, dedup_key) DO UPDATE SET
+              source_id = EXCLUDED.source_id, jurisdiction = EXCLUDED.jurisdiction,
+              source_agency = EXCLUDED.source_agency, source_url = EXCLUDED.source_url,
+              source_document_id = EXCLUDED.source_document_id, title = EXCLUDED.title,
+              published_at = EXCLUDED.published_at, event_date = EXCLUDED.event_date,
+              effective_date = EXCLUDED.effective_date, summary = EXCLUDED.summary, key_facts = EXCLUDED.key_facts,
+              entities = EXCLUDED.entities, people = EXCLUDED.people, organizations = EXCLUDED.organizations,
+              addresses = EXCLUDED.addresses, parcel_numbers = EXCLUDED.parcel_numbers, case_numbers = EXCLUDED.case_numbers,
+              permit_numbers = EXCLUDED.permit_numbers, project_names = EXCLUDED.project_names,
+              money_amounts = EXCLUDED.money_amounts, deadlines = EXCLUDED.deadlines, actions = EXCLUDED.actions,
+              decisions = EXCLUDED.decisions, status = EXCLUDED.status, topics = EXCLUDED.topics,
+              typed_payload = EXCLUDED.typed_payload, extraction_confidence = EXCLUDED.extraction_confidence,
+              extraction_version = EXCLUDED.extraction_version, last_seen_at = now()
+            RETURNING id
+            """,
+            (
+                organization_id, raw_document_id, source_id, draft.record_type, draft.jurisdiction, draft.source_agency,
+                draft.source_url, draft.source_document_id, draft.dedup_key, draft.title, draft.published_at,
+                draft.event_date, draft.effective_date, draft.summary, Jsonb(list(draft.key_facts)),
+                Jsonb(list(draft.entities)), Jsonb(list(draft.people)), Jsonb(list(draft.organizations)),
+                Jsonb(list(draft.addresses)), Jsonb(list(draft.parcel_numbers)), Jsonb(list(draft.case_numbers)),
+                Jsonb(list(draft.permit_numbers)), Jsonb(list(draft.project_names)), Jsonb(list(draft.money_amounts)),
+                Jsonb(list(draft.deadlines)), Jsonb(list(draft.actions)), Jsonb(list(draft.decisions)), draft.status,
+                Jsonb(list(draft.topics)), Jsonb(draft.typed_payload), draft.confidence, "canonical-deterministic-v1",
+            ),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            raise RuntimeError("Could not persist canonical civic record")
+        record_id = UUID(str(row["id"]))
+        await cursor.execute(
+            """
+            INSERT INTO civic.canonical_record_versions (
+              organization_id, canonical_record_id, raw_document_version_id, version_number, extraction_version, snapshot
+            ) VALUES (
+              %s, %s, %s,
+              coalesce((SELECT max(version_number) + 1 FROM civic.canonical_record_versions
+                WHERE organization_id = %s AND canonical_record_id = %s), 1),
+              %s, %s::jsonb
+            ) RETURNING id
+            """,
+            (organization_id, record_id, raw_document_version_id, organization_id, record_id, "canonical-deterministic-v1", Jsonb(snapshot)),
+        )
+        version_row = await cursor.fetchone()
+        if version_row is None:
+            raise RuntimeError("Could not version canonical civic record")
+        canonical_version_id = UUID(str(version_row["id"]))
+        await cursor.execute(
+            """UPDATE civic.canonical_records SET current_version_id = %s, last_seen_at = now()
+            WHERE organization_id = %s AND id = %s""",
+            (canonical_version_id, organization_id, record_id),
+        )
+        for item in draft.evidence:
+            await cursor.execute(
+                """
+                INSERT INTO civic.canonical_record_evidence (
+                  organization_id, canonical_record_version_id, field_name, value, source_text, source_url,
+                  start_offset, end_offset, page_reference, section_reference, confidence
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (organization_id, canonical_record_version_id, field_name, start_offset, end_offset)
+                DO NOTHING
+                """,
+                (organization_id, canonical_version_id, item.field_name, item.value, item.source_text, draft.source_url,
+                 item.start_offset, item.end_offset, item.page_reference, item.section_reference, item.confidence),
+            )
+        prior_snapshot = previous["snapshot"] if previous and previous["snapshot"] else None
+        prior_version_id = UUID(str(previous["current_version_id"])) if previous and previous["current_version_id"] else None
+        changes = self._canonical_changes(
+            draft=draft,
+            previous=prior_snapshot if isinstance(prior_snapshot, dict) else None,
+        )
+        change_ids: list[UUID] = []
+        for change_type, field_name, before, after in changes:
+            evidence = [
+                item.payload() | {"source_url": draft.source_url}
+                for item in draft.evidence
+                if field_name == "record" or item.field_name == field_name
+            ]
+            await cursor.execute(
+                """
+                INSERT INTO civic.canonical_record_changes (
+                  organization_id, canonical_record_id, from_version_id, to_version_id, change_type, field_name,
+                  previous_value, current_value, evidence, confidence
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s)
+                RETURNING id
+                """,
+                (organization_id, record_id, prior_version_id, canonical_version_id, change_type, field_name,
+                 Jsonb(before) if before is not None else None, Jsonb(after) if after is not None else None,
+                 Jsonb(evidence), draft.confidence),
+            )
+            change_row = await cursor.fetchone()
+            if change_row:
+                change_ids.append(UUID(str(change_row["id"])))
+        return CanonicalPersistence(
+            record_id=record_id,
+            version_id=canonical_version_id,
+            change_ids=tuple(change_ids),
+            change_types=tuple(change[0] for change in changes),
+        )
+
+    @staticmethod
+    def _canonical_snapshot(draft: CanonicalRecordDraft) -> dict[str, Any]:
+        return {
+            "record_type": draft.record_type, "title": draft.title, "published_at": draft.published_at.isoformat() if draft.published_at else None,
+            "event_date": draft.event_date.isoformat() if draft.event_date else None,
+            "effective_date": draft.effective_date.isoformat() if draft.effective_date else None,
+            "summary": draft.summary, "key_facts": list(draft.key_facts), "entities": list(draft.entities),
+            "people": list(draft.people), "organizations": list(draft.organizations), "addresses": list(draft.addresses),
+            "parcel_numbers": list(draft.parcel_numbers), "case_numbers": list(draft.case_numbers),
+            "permit_numbers": list(draft.permit_numbers), "project_names": list(draft.project_names),
+            "money_amounts": list(draft.money_amounts), "deadlines": list(draft.deadlines), "actions": list(draft.actions),
+            "decisions": list(draft.decisions), "status": draft.status, "topics": list(draft.topics),
+            "typed_payload": draft.typed_payload,
+        }
+
+    @staticmethod
+    def _canonical_changes(
+        *, draft: CanonicalRecordDraft, previous: dict[str, Any] | None
+    ) -> list[tuple[str, str, object | None, object | None]]:
+        current = PostgresDiscoveryRepository._canonical_snapshot(draft)
+        if previous is None:
+            return [("new_record", "record", None, current)]
+        changes: list[tuple[str, str, object | None, object | None]] = []
+        for key, value in current.items():
+            if previous.get(key) != value:
+                change_type = "field_changed"
+                if key == "deadlines":
+                    change_type = "deadline_changed"
+                elif key == "money_amounts" and draft.record_type in {"contract_award", "budget_financial_report"}:
+                    change_type = "project_value_increased"
+                elif key == "status" and draft.record_type == "planning_zoning_case" and value == "approved":
+                    change_type = "zoning_approved"
+                elif key == "status" and draft.record_type == "planning_zoning_case" and value == "denied":
+                    change_type = "zoning_denied"
+                elif key == "status" and draft.record_type == "contract_award" and value == "approved":
+                    change_type = "contract_awarded"
+                elif key == "status" and draft.record_type == "ordinance" and value == "approved":
+                    change_type = "ordinance_adopted"
+                changes.append((change_type, key, previous.get(key), value))
+        return changes
 
     async def _persist_entities(
         self,
@@ -498,11 +739,13 @@ class PostgresDiscoveryRepository:
         document_id: UUID,
         document_version_id: UUID,
         source_url: str,
-        processed: ProcessedDocument,
+        canonical_record_id: UUID,
+        canonical_change_id: UUID | None,
+        candidates: tuple[Any, ...],
     ) -> None:
-        """Persist deterministic signal candidates and their founder-ready views atomically."""
+        """Persist signals only after a canonical record and its change evidence exist."""
 
-        for candidate in processed.founder_signals:
+        for candidate in candidates:
             evidence = [
                 {
                     "document_id": str(document_id),
@@ -520,8 +763,8 @@ class PostgresDiscoveryRepository:
                   organization_id, document_id, document_version_id, signal_type, title, summary, why_it_matters,
                   economic_value_score, confidence_score, recency_score, urgency_score, evidence_strength_score,
                   actionability_score, commercial_significance, affected_organizations, potential_customer_segments,
-                  evidence
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb)
+                  evidence, canonical_record_id, canonical_change_id
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s, %s)
                 ON CONFLICT (organization_id, document_version_id, signal_type) DO UPDATE SET
                   title = EXCLUDED.title, summary = EXCLUDED.summary, why_it_matters = EXCLUDED.why_it_matters,
                   economic_value_score = EXCLUDED.economic_value_score, confidence_score = EXCLUDED.confidence_score,
@@ -531,6 +774,8 @@ class PostgresDiscoveryRepository:
                   commercial_significance = EXCLUDED.commercial_significance,
                   affected_organizations = EXCLUDED.affected_organizations,
                   potential_customer_segments = EXCLUDED.potential_customer_segments, evidence = EXCLUDED.evidence,
+                  canonical_record_id = EXCLUDED.canonical_record_id,
+                  canonical_change_id = EXCLUDED.canonical_change_id,
                   status = 'active', updated_at = now()
                 RETURNING id
                 """,
@@ -552,6 +797,8 @@ class PostgresDiscoveryRepository:
                     Jsonb(list(candidate.affected_organizations)),
                     Jsonb(list(candidate.potential_customer_segments)),
                     Jsonb(evidence),
+                    canonical_record_id,
+                    canonical_change_id,
                 ),
             )
             signal_row = await cursor.fetchone()
@@ -588,7 +835,7 @@ class PostgresDiscoveryRepository:
                 cursor=cursor,
                 organization_id=organization_id,
                 signal_id=UUID(str(signal_row["id"])),
-                document_text=processed.cleaned_text,
+                document_text=f"{candidate.title} {candidate.summary}",
             )
 
     async def _persist_watchlist_matches(
@@ -682,6 +929,93 @@ class PostgresDiscoveryRepository:
                 ON CONFLICT (worker_id) DO UPDATE SET last_seen_at = now(), last_scheduled_poll_at = now()""",
                 (worker_id,),
             )
+
+    async def backfill_canonical_records(self, *, limit: int | None = None) -> dict[str, int]:
+        """Rebuild the projection from immutable raw versions without recrawling sources."""
+
+        counts = {"raw_documents_processed": 0, "canonical_records_created": 0, "records_rejected": 0, "duplicates_merged": 0}
+        async with await self._connection() as connection:
+            async with connection.cursor() as cursor:
+                await cursor.execute("SELECT id FROM core.organizations WHERE is_active ORDER BY id")
+                organizations = await cursor.fetchall()
+            for organization in organizations:
+                organization_id = UUID(str(organization["id"]))
+                async with connection.transaction():
+                    await self._set_organization(connection, organization_id)
+                    async with connection.cursor() as cursor:
+                        await cursor.execute(
+                            """
+                            SELECT DISTINCT ON (document.id) document.id AS document_id, version.id AS version_id,
+                              document.title, document.document_type, document.canonical_url, version.extracted_text,
+                              version.extracted_metadata, source.id AS source_id, source.name AS source_name,
+                              source.canonical_url AS source_url,
+                              coalesce(municipality.name, organization.name) AS jurisdiction
+                            FROM civic.documents AS document
+                            JOIN civic.document_versions AS version
+                              ON version.organization_id = document.organization_id AND version.document_id = document.id
+                            LEFT JOIN civic.sources AS source
+                              ON source.organization_id = document.organization_id AND source.id = document.source_id
+                            JOIN core.organizations AS organization ON organization.id = document.organization_id
+                            LEFT JOIN core.municipalities AS municipality
+                              ON municipality.organization_id = document.organization_id AND municipality.id = document.municipality_id
+                            WHERE document.organization_id = %s AND coalesce(version.extracted_text, '') <> ''
+                            ORDER BY document.id, version.version_number DESC
+                            """ + (" LIMIT %s" if limit is not None else ""),
+                            (organization_id, limit) if limit is not None else (organization_id,),
+                        )
+                        rows = await cursor.fetchall()
+                        for row in rows:
+                            try:
+                                await cursor.execute("SAVEPOINT canonical_backfill_document")
+                                await cursor.execute(
+                                    """
+                                    SELECT 1 FROM civic.canonical_record_versions
+                                    WHERE organization_id = %s AND raw_document_version_id = %s LIMIT 1
+                                    """,
+                                    (organization_id, row["version_id"]),
+                                )
+                                if await cursor.fetchone():
+                                    counts["duplicates_merged"] += 1
+                                    continue
+                                extracted = ExtractedDocument(
+                                    title=str(row["title"]), document_type=str(row["document_type"]),
+                                    text=str(row["extracted_text"]), metadata={},
+                                )
+                                processed = process_document(extracted, ProcessingContext(departments=(), topics=()))
+                                source_url = str(row["canonical_url"] or row["source_url"] or "").strip()
+                                if not source_url:
+                                    raise ValueError("Raw document has no auditable source URL")
+                                draft = canonicalize_document(
+                                    processed=processed,
+                                    source_agency=str(row["source_name"] or "Official public source"),
+                                    source_url=source_url,
+                                    jurisdiction=str(row["jurisdiction"]) if row["jurisdiction"] else None,
+                                )
+                                existed_before = False
+                                await cursor.execute(
+                                    """SELECT 1 FROM civic.canonical_records
+                                    WHERE organization_id = %s AND record_type = %s AND dedup_key = %s""",
+                                    (organization_id, draft.record_type, draft.dedup_key),
+                                )
+                                existed_before = await cursor.fetchone() is not None
+                                await self._persist_canonical_record(
+                                    cursor=cursor, organization_id=organization_id,
+                                    raw_document_id=UUID(str(row["document_id"])),
+                                    raw_document_version_id=UUID(str(row["version_id"])),
+                                    source_id=UUID(str(row["source_id"])) if row["source_id"] else None,
+                                    draft=draft,
+                                )
+                                counts["raw_documents_processed"] += 1
+                                if existed_before:
+                                    counts["duplicates_merged"] += 1
+                                else:
+                                    counts["canonical_records_created"] += 1
+                                await cursor.execute("RELEASE SAVEPOINT canonical_backfill_document")
+                            except Exception:
+                                await cursor.execute("ROLLBACK TO SAVEPOINT canonical_backfill_document")
+                                logger.exception("Canonical backfill failed", extra={"document_id": str(row["document_id"])})
+                                counts["records_rejected"] += 1
+        return counts
 
     async def _complete_ingestion_runs(
         self, cursor: psycopg.AsyncCursor[dict[str, Any]], organization_id: UUID

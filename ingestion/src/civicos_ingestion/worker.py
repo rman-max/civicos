@@ -69,11 +69,15 @@ def build_founder_brief_service(settings: Settings) -> FounderBriefService:
     )
 
 
-async def run_worker(*, once: bool) -> None:
+async def run_worker(*, once: bool, backfill_canonical: bool = False) -> None:
     settings = Settings()  # type: ignore[call-arg]
     service = build_service(settings)
     briefing_service = build_briefing_service(settings)
     founder_brief_service = build_founder_brief_service(settings)
+    if backfill_canonical:
+        result = await service.backfill_canonical_records()
+        logging.getLogger(__name__).info("Canonical backfill complete", extra=result)
+        return
     while True:
         await service.record_heartbeat(socket.gethostname())
         discovery_claimed = await service.run_due_jobs()
@@ -98,12 +102,17 @@ def main() -> None:
         action="store_true",
         help="Apply the idempotent St. Joseph County source seed first.",
     )
+    parser.add_argument(
+        "--backfill-canonical",
+        action="store_true",
+        help="Rebuild canonical civic records from immutable raw document versions, then exit.",
+    )
     arguments = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     if arguments.apply_seed:
         settings = Settings()  # type: ignore[call-arg]
         apply_st_joseph_seed(settings.database_url)
-    asyncio.run(run_worker(once=arguments.once))
+    asyncio.run(run_worker(once=arguments.once, backfill_canonical=arguments.backfill_canonical))
 
 
 if __name__ == "__main__":

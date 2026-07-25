@@ -36,6 +36,7 @@ class SearchFilters:
     municipality_ids: tuple[UUID, ...] = ()
     document_types: tuple[str, ...] = ()
     newest_first: bool = False
+    raw_documents: bool = False
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,15 @@ class SearchHit:
     score: float
     match_kind: str
     ingested_at: datetime | None = None
+    canonical_record_id: UUID | None = None
+    jurisdiction: str | None = None
+    summary: str | None = None
+    entities: tuple[str, ...] = ()
+    addresses: tuple[str, ...] = ()
+    money_amounts: tuple[str, ...] = ()
+    deadlines: tuple[str, ...] = ()
+    status: str | None = None
+    evidence: tuple[dict[str, object], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -83,6 +93,10 @@ class PostgresSearchRepository:
     async def keyword_search(
         self, *, organization_id: UUID, query: str, filters: SearchFilters, limit: int
     ) -> list[SearchHit]:
+        if not filters.raw_documents:
+            return await self._canonical_keyword_search(
+                organization_id=organization_id, query=query, filters=filters, limit=limit
+            )
         clauses, parameters = self._filter_clauses(organization_id=organization_id, filters=filters)
         sql = f"""
             WITH terms AS (SELECT websearch_to_tsquery('english'::regconfig, %s) AS query),
@@ -120,6 +134,41 @@ class PostgresSearchRepository:
         )
         return [self._hit_from_row(row, match_kind="keyword") for row in rows]
 
+    async def _canonical_keyword_search(
+        self, *, organization_id: UUID, query: str, filters: SearchFilters, limit: int
+    ) -> list[SearchHit]:
+        clauses, parameters = self._canonical_filter_clauses(organization_id=organization_id, filters=filters)
+        sql = f"""
+            WITH terms AS (SELECT websearch_to_tsquery('english'::regconfig, %s) AS query)
+            SELECT record.id AS canonical_record_id, record.raw_document_id AS document_id,
+              raw_version.id AS document_version_id, record.title, record.record_type AS document_type,
+              record.source_agency AS source_name, record.source_url AS canonical_url, NULL::uuid AS department_id,
+              record.published_at, raw_version.created_at AS ingested_at, record.summary AS excerpt,
+              record.summary, record.jurisdiction, record.entities, record.addresses, record.money_amounts,
+              record.deadlines, record.status,
+              coalesce((SELECT jsonb_agg(jsonb_build_object(
+                'field_name', evidence.field_name, 'source_text', evidence.source_text,
+                'source_url', evidence.source_url, 'start_offset', evidence.start_offset,
+                'end_offset', evidence.end_offset, 'confidence', evidence.confidence,
+                'page_reference', evidence.page_reference, 'section_reference', evidence.section_reference
+              ) ORDER BY evidence.id)
+                FROM civic.canonical_record_evidence AS evidence
+                WHERE evidence.organization_id = record.organization_id
+                  AND evidence.canonical_record_version_id = record.current_version_id), '[]'::jsonb) AS evidence,
+              ts_rank(record.search_vector, terms.query) AS score
+            FROM civic.canonical_records AS record
+            JOIN civic.document_versions AS raw_version
+              ON raw_version.organization_id = record.organization_id
+             AND raw_version.id = (SELECT raw_document_version_id FROM civic.canonical_record_versions
+                WHERE organization_id = record.organization_id AND id = record.current_version_id)
+            CROSS JOIN terms
+            WHERE {" AND ".join(clauses)} AND record.search_vector @@ terms.query
+            ORDER BY {"record.published_at DESC NULLS LAST, score DESC" if filters.newest_first else "score DESC, record.published_at DESC NULLS LAST"}, record.id
+            LIMIT %s
+        """
+        rows = await self._fetchall(sql, (query, *parameters, limit), organization_id)
+        return [self._canonical_hit_from_row(row, match_kind="keyword") for row in rows]
+
     async def documents_by_ids(
         self, *, organization_id: UUID, document_ids: tuple[UUID, ...], filters: SearchFilters
     ) -> list[SearchHit]:
@@ -156,6 +205,35 @@ class PostgresSearchRepository:
             organization_id,
         )
         return [self._hit_from_row(row, match_kind="semantic") for row in rows]
+
+    def _canonical_filter_clauses(
+        self, *, organization_id: UUID, filters: SearchFilters
+    ) -> tuple[list[str], list[object]]:
+        clauses = ["record.organization_id = %s"]
+        parameters: list[object] = [organization_id]
+        if filters.start_date is not None:
+            clauses.append("record.published_at >= %s")
+            parameters.append(filters.start_date)
+        if filters.end_date is not None:
+            clauses.append("record.published_at <= %s")
+            parameters.append(filters.end_date)
+        if filters.source_ids:
+            clauses.append("record.source_id = ANY(%s::uuid[])")
+            parameters.append(list(filters.source_ids))
+        if filters.department_ids:
+            clauses.append("EXISTS (SELECT 1 FROM civic.documents AS document WHERE document.organization_id = record.organization_id AND document.id = record.raw_document_id AND document.department_id = ANY(%s::uuid[]))")
+            parameters.append(list(filters.department_ids))
+        if filters.municipality_ids:
+            clauses.append("EXISTS (SELECT 1 FROM civic.documents AS document WHERE document.organization_id = record.organization_id AND document.id = record.raw_document_id AND document.municipality_id = ANY(%s::uuid[]))")
+            parameters.append(list(filters.municipality_ids))
+        if filters.document_types:
+            clauses.append("record.record_type = ANY(%s::text[])")
+            parameters.append(list(filters.document_types))
+        if filters.topic_ids:
+            # Canonical records preserve topic labels, while topic IDs remain on the raw document.
+            clauses.append("EXISTS (SELECT 1 FROM civic.topic_assignments AS assignment WHERE assignment.organization_id = record.organization_id AND assignment.document_id = record.raw_document_id AND assignment.topic_id = ANY(%s::uuid[]))")
+            parameters.append(list(filters.topic_ids))
+        return clauses, parameters
 
     def _filter_clauses(
         self, *, organization_id: UUID, filters: SearchFilters
@@ -219,6 +297,35 @@ class PostgresSearchRepository:
             published_at=row["published_at"],
             ingested_at=row["ingested_at"],
             excerpt=str(row["excerpt"]),
+            score=float(row["score"]),
+            match_kind=match_kind,
+        )
+
+    @staticmethod
+    def _canonical_hit_from_row(row: dict[str, Any], *, match_kind: str) -> SearchHit:
+        def text_values(value: object) -> tuple[str, ...]:
+            return tuple(str(item) for item in value) if isinstance(value, list) else ()
+
+        return SearchHit(
+            document_id=UUID(str(row["document_id"])),
+            document_version_id=UUID(str(row["document_version_id"])),
+            canonical_record_id=UUID(str(row["canonical_record_id"])),
+            title=str(row["title"]),
+            document_type=str(row["document_type"]),
+            source_name=str(row["source_name"]) if row["source_name"] else None,
+            canonical_url=str(row["canonical_url"]) if row["canonical_url"] else None,
+            department_id=None,
+            published_at=row["published_at"],
+            ingested_at=row["ingested_at"],
+            excerpt=str(row["excerpt"]),
+            summary=str(row["summary"]),
+            jurisdiction=str(row["jurisdiction"]) if row["jurisdiction"] else None,
+            entities=text_values(row["entities"]),
+            addresses=text_values(row["addresses"]),
+            money_amounts=text_values(row["money_amounts"]),
+            deadlines=text_values(row["deadlines"]),
+            status=str(row["status"]) if row["status"] else None,
+            evidence=tuple(row["evidence"]) if isinstance(row["evidence"], list) else (),
             score=float(row["score"]),
             match_kind=match_kind,
         )
@@ -338,8 +445,10 @@ class HybridSearchService:
             keyword_results = await self._repository.keyword_search(
                 organization_id=organization_id, query=query, filters=filters, limit=limit
             )
-        semantic_available = self._semantic_client is not None
-        if mode in {SearchMode.SEMANTIC, SearchMode.HYBRID} and self._semantic_client is not None:
+        # Existing Qdrant points are raw document-version points.  Canonical
+        # records use PostgreSQL FTS until a dedicated canonical vector index is enabled.
+        semantic_available = self._semantic_client is not None and filters.raw_documents
+        if mode in {SearchMode.SEMANTIC, SearchMode.HYBRID} and self._semantic_client is not None and filters.raw_documents:
             try:
                 semantic_candidates = await self._semantic_client.search(
                     organization_id=organization_id, query=query, filters=filters, limit=limit * 3

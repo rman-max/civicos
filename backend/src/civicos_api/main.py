@@ -120,6 +120,15 @@ class SearchResultResponse(BaseModel):
     excerpt: str
     score: float
     match_kind: str
+    canonical_record_id: UUID | None = None
+    jurisdiction: str | None = None
+    summary: str | None = None
+    entities: list[str] = Field(default_factory=list)
+    addresses: list[str] = Field(default_factory=list)
+    money_amounts: list[str] = Field(default_factory=list)
+    deadlines: list[str] = Field(default_factory=list)
+    status: str | None = None
+    evidence: list[dict[str, object]] = Field(default_factory=list)
 
 
 class SearchResponseModel(BaseModel):
@@ -917,6 +926,7 @@ async def search_documents(
     source_id: Annotated[list[UUID] | None, Query()] = None,
     municipality_id: Annotated[list[UUID] | None, Query()] = None,
     document_type: Annotated[list[str] | None, Query(max_length=50)] = None,
+    view: Literal["canonical", "raw"] = "canonical",
     sort: Literal["relevance", "newest"] = "relevance",
 ) -> SearchResponseModel:
     """Search one organization; authentication must derive the tenant scope at the edge."""
@@ -939,6 +949,7 @@ async def search_documents(
         municipality_ids=tuple(municipality_id or []),
         document_types=tuple(document_type or []),
         newest_first=sort == "newest",
+        raw_documents=view == "raw",
     )
     try:
         response = await service.search(
@@ -1273,6 +1284,15 @@ def _search_hit_payload(hit: SearchHit) -> dict[str, object]:
         "excerpt": hit.excerpt,
         "score": hit.score,
         "match_kind": hit.match_kind,
+        "canonical_record_id": hit.canonical_record_id,
+        "jurisdiction": hit.jurisdiction,
+        "summary": hit.summary,
+        "entities": list(hit.entities),
+        "addresses": list(hit.addresses),
+        "money_amounts": list(hit.money_amounts),
+        "deadlines": list(hit.deadlines),
+        "status": hit.status,
+        "evidence": list(hit.evidence),
     }
 
 

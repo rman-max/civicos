@@ -40,6 +40,16 @@ python -m civicos_ingestion.worker --apply-seed --once
 
 It safely applies the seed then processes one five-source batch. Leave the persistent worker running to process the remaining queued sources. Confirm progress through `GET /v1/founder/ingestion/status` and `GET /v1/search?query=county&mode=keyword` while authenticated as the founder.
 
+## Canonical civic-record backfill
+
+After the API service deploys migration `0013_canonical_civic_records`, run this one-off command from the worker service:
+
+```sh
+python -m civicos_ingestion.worker --backfill-canonical
+```
+
+It makes no network calls and does not alter raw documents, artifacts, or raw versions. It rebuilds the deterministic canonical projection from existing immutable source text, creates field-level change events, and reports processed, created, rejected, and merged counts in worker logs. Default `GET /v1/search` returns this canonical projection; append `view=raw` only when auditing original source documents.
+
 ## Founder refresh
 
 `POST /v1/founder/ingestion/runs` queues all enabled sources, or accepts `{ "source_id": "<uuid>" }` for one connector. It returns immediately with a durable run ID. `GET /v1/founder/ingestion/runs/{run_id}` reports every connector's progress and counts. Only tenant administrators can use these endpoints; the configured cooldown and the partial unique active-source index prevent overlapping refreshes.
