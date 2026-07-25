@@ -10,9 +10,9 @@ import { Card } from "@/components/ui/card";
 import { Notice } from "@/components/ui/notice";
 import { TextInput } from "@/components/ui/text-input";
 import { SectionHeading } from "@/components/ui/typography";
+import { founderAccessTokenStorageKey } from "@/lib/founder-session";
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
-const tokenStorageKey = "civicos-founder-access-token";
 
 interface Opportunity {
   id: string;
@@ -63,7 +63,7 @@ export function FounderConsole() {
 
   useEffect(() => {
     async function restoreSession() {
-      const token = window.sessionStorage.getItem(tokenStorageKey);
+      const token = window.sessionStorage.getItem(founderAccessTokenStorageKey);
       if (!token) {
         setState("signed-out");
         return;
@@ -92,7 +92,7 @@ export function FounderConsole() {
       setBrief(loadedBrief);
       setState("ready");
     } catch (loadError) {
-      window.sessionStorage.removeItem(tokenStorageKey);
+      window.sessionStorage.removeItem(founderAccessTokenStorageKey);
       setError(loadError instanceof Error ? loadError.message : "CivicOS data is unavailable.");
       setState("signed-out");
     }
@@ -116,7 +116,7 @@ export function FounderConsole() {
         throw new Error("The founder secret was not accepted.");
       }
       const result = (await response.json()) as { access_token: string };
-      window.sessionStorage.setItem(tokenStorageKey, result.access_token);
+      window.sessionStorage.setItem(founderAccessTokenStorageKey, result.access_token);
       setSecret("");
       await load(result.access_token);
     } catch (loginError) {
@@ -126,7 +126,7 @@ export function FounderConsole() {
   }
 
   function signOut() {
-    window.sessionStorage.removeItem(tokenStorageKey);
+    window.sessionStorage.removeItem(founderAccessTokenStorageKey);
     setOpportunities([]);
     setWatchlists([]);
     setBrief(undefined);
